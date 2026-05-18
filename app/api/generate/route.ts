@@ -117,15 +117,23 @@ if (!response.ok) {
   };
 }
 
-  const payload = (await response.json()) as { output_text?: string };
+ const payload = await response.json();
 
-  return {
-    provider: "openai",
-    label: "OpenAI",
-    result: payload.output_text ?? "",
-    status: "success"
-  };
-}
+console.log("OpenAI API Success Payload", JSON.stringify(payload, null, 2));
+
+const outputText =
+  payload.output_text ??
+  payload.output?.[0]?.content?.[0]?.text ??
+  payload.output?.[0]?.content?.[0]?.value ??
+  "";
+
+return {
+  provider: "openai",
+  label: "OpenAI",
+  result: outputText,
+  status: outputText ? "success" : "error",
+  error: outputText ? undefined : "OpenAI 응답은 성공했지만 결과 텍스트를 찾지 못했습니다."
+};
 
 async function generateClaude(
   instructions: string,
