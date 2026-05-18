@@ -99,15 +99,23 @@ async function generateOpenAi(
     })
   });
 
-  if (!response.ok) {
-    return {
-      provider: "openai",
-      label: "OpenAI",
-      result: "",
-      status: "error",
-      error: "OpenAI API 요청에 실패했습니다."
-    };
-  }
+if (!response.ok) {
+  const errorText = await response.text();
+
+  console.error("OpenAI API Error", {
+    status: response.status,
+    statusText: response.statusText,
+    body: errorText
+  });
+
+  return {
+    provider: "openai",
+    label: "OpenAI",
+    result: "",
+    status: "error",
+    error: `OpenAI API 요청 실패: ${response.status} ${errorText}`
+  };
+}
 
   const payload = (await response.json()) as { output_text?: string };
 
