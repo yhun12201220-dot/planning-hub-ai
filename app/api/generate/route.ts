@@ -93,7 +93,7 @@ async function generateOpenAi(
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-5",
+      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       instructions,
       input
     })
