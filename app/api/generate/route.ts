@@ -115,7 +115,7 @@ if (!response.ok) {
     status: "error",
     error: `OpenAI API 요청 실패: ${response.status} ${errorText}`
   };
-}
+
 
  const payload = await response.json();
 
@@ -134,7 +134,7 @@ return {
   status: outputText ? "success" : "error",
   error: outputText ? undefined : "OpenAI 응답은 성공했지만 결과 텍스트를 찾지 못했습니다."
 };
-
+}
 async function generateClaude(
   instructions: string,
   input: string
