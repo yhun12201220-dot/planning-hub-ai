@@ -21,6 +21,7 @@ create table if not exists public.marketing_outputs (
   status text not null default '초안',
   tags text[] not null default '{}'::text[],
   outputs jsonb not null default '[]'::jsonb,
+  attachments jsonb not null default '[]'::jsonb,
   is_deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -44,6 +45,7 @@ alter table public.marketing_outputs
   add column if not exists result text,
   add column if not exists status text default '초안',
   add column if not exists tags text[] default '{}'::text[],
+  add column if not exists attachments jsonb default '[]'::jsonb,
   add column if not exists is_deleted boolean default false,
   add column if not exists updated_at timestamptz default now();
 
@@ -62,6 +64,7 @@ set
   reference_text = coalesce(reference_text, ''),
   status = coalesce(status, '초안'),
   tags = coalesce(tags, '{}'::text[]),
+  attachments = coalesce(attachments, '[]'::jsonb),
   is_deleted = coalesce(is_deleted, false),
   updated_at = coalesce(updated_at, created_at, now());
 

@@ -56,7 +56,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .eq("id", id)
       .or("is_deleted.eq.false,is_deleted.is.null")
       .select(
-        "id, title, project_name, brand_name, work_type, tone, target, objective, key_message, required_points, excluded_points, reference_text, source_text, result_text, result, primary_result, status, tags, outputs, created_at, updated_at, is_deleted"
+        "id, title, project_name, brand_name, work_type, tone, target, objective, key_message, required_points, excluded_points, reference_text, source_text, result_text, primary_result, status, tags, outputs, attachments, created_at, updated_at, is_deleted"
       )
       .single();
 

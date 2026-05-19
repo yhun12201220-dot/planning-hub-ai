@@ -34,6 +34,16 @@ export type AiOutput = {
   error?: string;
 };
 
+export type Attachment = {
+  name: string;
+  type: string;
+  size: number;
+  url: string;
+  path: string;
+  bucket: "marketing-attachments";
+  uploadedAt: string;
+};
+
 export type MarketingFormState = {
   projectName: string;
   brandName: string;
@@ -68,6 +78,7 @@ export type SavedResult = {
   status: ResultStatus | null;
   tags: string[] | null;
   outputs: AiOutput[] | null;
+  attachments: Attachment[] | null;
   is_deleted?: boolean;
   created_at: string;
   updated_at: string | null;
@@ -409,8 +420,17 @@ export function buildPromptInstructions({
 }
 
 export function buildPromptInput(
-  form: Partial<MarketingFormState> & { workType: WorkType }
+  form: Partial<MarketingFormState> & {
+    workType: WorkType;
+    attachments?: Attachment[];
+  }
 ) {
+  const attachmentSummary = form.attachments?.length
+    ? form.attachments
+        .map((file) => `${file.name} (${file.type || "unknown"})`)
+        .join(", ")
+    : "";
+
   const rows = [
     ["프로젝트명", form.projectName],
     ["브랜드명", form.brandName],
@@ -422,6 +442,7 @@ export function buildPromptInput(
     ["필수 포함 내용", form.requiredPoints],
     ["제외할 내용", form.excludedPoints],
     ["참고 레퍼런스", form.referenceText],
+    ["레퍼런스 첨부", attachmentSummary],
     ["원문 입력", form.sourceText]
   ]
     .filter(([, value]) => typeof value === "string" && value.trim())

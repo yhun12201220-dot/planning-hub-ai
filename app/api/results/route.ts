@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  Attachment,
   ResultStatus,
   SavedResult,
   ToneOption,
@@ -30,6 +31,7 @@ type SaveRequest = {
   status?: ResultStatus;
   tags?: string[] | string;
   outputs?: unknown;
+  attachments?: Attachment[];
 };
 
 const resultSelect = [
@@ -51,6 +53,7 @@ const resultSelect = [
   "status",
   "tags",
   "outputs",
+  "attachments",
   "created_at",
   "updated_at",
   "is_deleted"
@@ -159,6 +162,7 @@ export async function POST(request: Request) {
         status: isResultStatus(body.status) ? body.status : "초안",
         tags: parseTags(body.tags),
         outputs: body.outputs ?? [],
+        attachments: body.attachments ?? [],
         is_deleted: false,
         updated_at: new Date().toISOString()
       })

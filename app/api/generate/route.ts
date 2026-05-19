@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   AiOutput,
+  Attachment,
   MarketingFormState,
   TransformActionId,
   ToneOption,
@@ -14,6 +15,7 @@ import {
 type GenerateRequest = Partial<MarketingFormState> & {
   workType?: WorkType;
   transformAction?: TransformActionId | null;
+  attachments?: Attachment[];
 };
 
 async function generateOpenAi(
@@ -162,7 +164,8 @@ export async function POST(request: Request) {
       requiredPoints: body.requiredPoints ?? "",
       excludedPoints: body.excludedPoints ?? "",
       referenceText: body.referenceText ?? "",
-      sourceText: body.sourceText
+      sourceText: body.sourceText,
+      attachments: body.attachments ?? []
     });
     const instructions = buildPromptInstructions({
       workType: body.workType,

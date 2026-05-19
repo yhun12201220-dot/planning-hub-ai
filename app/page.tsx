@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AiOutput,
+  Attachment,
   MarketingFormState,
   ResultStatus,
   SavedResult,
@@ -55,6 +56,15 @@ const formatDate = (value: string | null) => {
 const getDisplayTitle = (item: SavedResult) =>
   item.title?.trim() || item.project_name || item.brand_name || "저장 결과";
 
+const formatFileSize = (size: number) => {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+};
+
+const isImageAttachment = (attachment: Attachment) =>
+  attachment.type.startsWith("image/");
+
 export default function Home() {
   const [form, setForm] = useState<MarketingFormState>(initialFormState);
   const [outputs, setOutputs] = useState<AiOutput[]>([]);
@@ -63,6 +73,7 @@ export default function Home() {
   );
   const [savedResults, setSavedResults] = useState<SavedResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<SavedResult | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [filters, setFilters] = useState<SearchFilters>(initialFilters);
   const [detailTitle, setDetailTitle] = useState("");
   const [detailStatus, setDetailStatus] = useState<ResultStatus>("초안");
@@ -71,6 +82,7 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUpdatingDetail, setIsUpdatingDetail] = useState(false);
   const [isTransforming, setIsTransforming] = useState(false);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copyState, setCopyState] = useState("복사하기");
@@ -215,6 +227,7 @@ export default function Home() {
       sourceText: string;
       tone: ToneOption;
       transformAction?: TransformActionId | null;
+      attachments?: Attachment[];
     }
   ) => {
     const response = await fetch("/api/generate", {
@@ -252,6 +265,7 @@ export default function Home() {
     try {
       await handleGenerate({
         ...form,
+        attachments,
         transformAction: null
       });
       setNotice("AI 결과가 생성되었습니다. 저장하거나 다른 형식으로 변환할 수 있습니다.");
@@ -280,11 +294,72 @@ export default function Home() {
   const handleReset = () => {
     setForm(initialFormState);
     setOutputs([]);
+    setAttachments([]);
     setSelectedResult(null);
     setError("");
     setNotice("");
     setCopyState("복사하기");
     setHasSavedCurrentResult(false);
+  };
+
+  const handleAttachmentUpload = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+
+    if (files.length === 0) return;
+
+    setIsUploadingAttachment(true);
+    setError("");
+
+    try {
+      const uploadedAttachments: Attachment[] = [];
+
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch("/api/attachments", {
+          method: "POST",
+          body: formData
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "첨부파일 업로드에 실패했습니다.");
+        }
+
+        uploadedAttachments.push(payload.attachment as Attachment);
+      }
+
+      setAttachments((current) => [...current, ...uploadedAttachments]);
+      setNotice("첨부파일이 업로드되었습니다.");
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "첨부파일 업로드 중 오류가 발생했습니다."
+      );
+    } finally {
+      setIsUploadingAttachment(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleRemoveAttachment = async (attachment: Attachment) => {
+    setAttachments((current) =>
+      current.filter((item) => item.path !== attachment.path)
+    );
+
+    if (!selectedResult) {
+      await fetch("/api/attachments", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ path: attachment.path })
+      }).catch(() => undefined);
+    }
   };
 
   const getCurrentContext = () => {
@@ -300,11 +375,15 @@ export default function Home() {
         requiredPoints: selectedResult.required_points ?? "",
         excludedPoints: selectedResult.excluded_points ?? "",
         referenceText: selectedResult.reference_text ?? "",
-        sourceText: selectedResult.source_text ?? ""
-      } satisfies MarketingFormState;
+        sourceText: selectedResult.source_text ?? "",
+        attachments: selectedResult.attachments ?? []
+      };
     }
 
-    return form;
+    return {
+      ...form,
+      attachments
+    };
   };
 
   const handleSave = async () => {
@@ -337,7 +416,8 @@ export default function Home() {
         primaryResult: activeOutput?.result ?? successfulOutputs[0].result,
         status: selectedResult?.status ?? "초안",
         tags: selectedResult?.tags ?? [],
-        outputs
+        outputs,
+        attachments: context.attachments ?? attachments
       })
     });
 
@@ -365,6 +445,7 @@ export default function Home() {
 
     setOutputs(restoredOutputs);
     setActiveProvider(firstSuccess?.provider ?? "openai");
+    setAttachments(item.attachments ?? []);
     setSelectedResult(item);
     setError("");
     setNotice(`${getDisplayTitle(item)}를 불러왔습니다.`);
@@ -493,6 +574,7 @@ export default function Home() {
         tone: mapped.tone,
         requiredPoints: mapped.requiredPoints,
         sourceText: baseResultText,
+        attachments: context.attachments ?? [],
         transformAction: action
       });
       setNotice("결과를 다른 업무 형식으로 변환했습니다.");
@@ -724,6 +806,80 @@ export default function Home() {
                 className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
               />
             </label>
+
+            <section
+              id="reference-attachments"
+              data-testid="reference-attachments"
+              className="rounded-md border border-line bg-white p-4"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">레퍼런스 첨부</h3>
+                  <p className="mt-1 text-sm leading-6 text-muted">
+                    이미지, 캡처본, PDF, PPT 등 AI가 참고할 자료를 첨부해 주세요.
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Supabase Storage에 marketing-attachments 버킷이 필요합니다.
+                  </p>
+                </div>
+                <label className="inline-flex h-10 cursor-pointer items-center justify-center rounded-md bg-ink px-4 text-sm font-semibold text-white transition hover:bg-slate-700">
+                  {isUploadingAttachment ? "업로드 중" : "파일 선택"}
+                  <input
+                    type="file"
+                    multiple
+                    accept=".jpg,.jpeg,.png,.webp,.pdf,.pptx,.docx,.xlsx,image/jpeg,image/png,image/webp,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleAttachmentUpload}
+                    disabled={isUploadingAttachment}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+
+              {attachments.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                  {attachments.map((attachment) => (
+                    <div
+                      key={attachment.path}
+                      className="flex items-center gap-3 rounded-md border border-line bg-slate-50 px-3 py-3"
+                    >
+                      {isImageAttachment(attachment) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={attachment.url}
+                          alt={attachment.name}
+                          className="h-12 w-12 shrink-0 rounded object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-white text-xs font-semibold text-muted">
+                          FILE
+                        </div>
+                      )}
+                      <a
+                        href={attachment.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="min-w-0 flex-1"
+                      >
+                        <span className="block truncate text-sm font-semibold text-ink">
+                          {attachment.name}
+                        </span>
+                        <span className="mt-1 block truncate text-xs text-muted">
+                          {attachment.type || "unknown"} ·{" "}
+                          {formatFileSize(attachment.size)}
+                        </span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveAttachment(attachment)}
+                        className="rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
 
             <label className="block">
               <span className="text-sm font-semibold text-ink">원문 입력</span>
@@ -984,6 +1140,48 @@ export default function Home() {
                     <p className="mt-1 whitespace-pre-wrap">
                       {selectedResult.source_text || "-"}
                     </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">
+                      레퍼런스 첨부
+                    </p>
+                    {selectedResult.attachments?.length ? (
+                      <div className="mt-2 space-y-2">
+                        {selectedResult.attachments.map((attachment) => (
+                          <a
+                            key={attachment.path}
+                            href={attachment.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-3 rounded-md border border-line bg-slate-50 px-3 py-3"
+                          >
+                            {isImageAttachment(attachment) ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={attachment.url}
+                                alt={attachment.name}
+                                className="h-10 w-10 shrink-0 rounded object-cover"
+                              />
+                            ) : (
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white text-xs font-semibold text-muted">
+                                FILE
+                              </span>
+                            )}
+                            <span className="min-w-0">
+                              <span className="block truncate font-semibold text-ink">
+                                {attachment.name}
+                              </span>
+                              <span className="mt-1 block truncate text-xs text-muted">
+                                {attachment.type || "unknown"} ·{" "}
+                                {formatFileSize(attachment.size)}
+                              </span>
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1">-</p>
+                    )}
                   </div>
                 </div>
               </div>
