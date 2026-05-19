@@ -25,6 +25,8 @@ type SavedResult = {
   project_name: string;
   brand_name: string;
   work_type: WorkType;
+  primary_result: string;
+  outputs: AiOutput[] | null;
   created_at: string;
 };
 
@@ -75,11 +77,38 @@ const workflowSteps = [
   "최근 결과 표시"
 ];
 
+const getWorkTypeLabel = (workType: WorkType) =>
+  workTypes.find((item) => item.id === workType)?.label ?? workType;
+
+const formatDate = (value: string) =>
+  new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+
+const normalizeSavedOutputs = (item: SavedResult): AiOutput[] => {
+  if (Array.isArray(item.outputs) && item.outputs.length > 0) {
+    return item.outputs;
+  }
+
+  return [
+    {
+      provider: "openai",
+      label: "Saved",
+      result: item.primary_result,
+      status: "success"
+    }
+  ];
+};
+
 export default function Home() {
   const [form, setForm] = useState<FormState>(initialForm);
   const [outputs, setOutputs] = useState<AiOutput[]>([]);
   const [activeProvider, setActiveProvider] = useState<Provider>("openai");
   const [savedResults, setSavedResults] = useState<SavedResult[]>([]);
+  const [selectedSavedId, setSelectedSavedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
@@ -144,8 +173,8 @@ export default function Home() {
     setError("");
     setNotice("");
     setOutputs([]);
+    setSelectedSavedId(null);
     setHasSavedCurrentResult(false);
-
     setIsLoading(true);
 
     try {
@@ -163,9 +192,10 @@ export default function Home() {
         throw new Error(payload.error ?? "결과 생성에 실패했습니다.");
       }
 
-      setOutputs(payload.outputs ?? []);
-      const firstSuccess = payload.outputs?.find(
-        (output: AiOutput) => output.status === "success"
+      const nextOutputs = (payload.outputs ?? []) as AiOutput[];
+      setOutputs(nextOutputs);
+      const firstSuccess = nextOutputs.find(
+        (output) => output.status === "success"
       );
       setActiveProvider(firstSuccess?.provider ?? "openai");
       setNotice("AI 결과가 생성되었습니다. 확인 후 저장하면 최근 결과에 표시됩니다.");
@@ -191,6 +221,7 @@ export default function Home() {
   const handleReset = () => {
     setForm(initialForm);
     setOutputs([]);
+    setSelectedSavedId(null);
     setError("");
     setNotice("");
     setCopyState("복사");
@@ -231,6 +262,24 @@ export default function Home() {
     setNotice("결과물이 저장되었습니다.");
     setHasSavedCurrentResult(true);
     await loadSavedResults();
+
+    if (payload.result?.id) {
+      setSelectedSavedId(payload.result.id);
+    }
+  };
+
+  const handleSelectSavedResult = (item: SavedResult) => {
+    const restoredOutputs = normalizeSavedOutputs(item);
+    const firstSuccess = restoredOutputs.find(
+      (output) => output.status === "success" && output.result
+    );
+
+    setOutputs(restoredOutputs);
+    setActiveProvider(firstSuccess?.provider ?? restoredOutputs[0]?.provider ?? "openai");
+    setSelectedSavedId(item.id);
+    setNotice(`${item.project_name} 저장 결과를 불러왔습니다.`);
+    setError("");
+    setCopyState("복사");
   };
 
   return (
@@ -292,7 +341,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mb-7 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="mb-7 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
             {workflowSteps.map((step, index) => (
               <div
                 key={step}
@@ -468,30 +517,49 @@ export default function Home() {
             ) : (
               <div className="flex min-h-[370px] items-center justify-center text-center">
                 <p className="max-w-xs text-sm leading-6 text-muted">
-                  원문을 입력하면 OpenAI와 Claude 결과가 병렬로 표시됩니다.
+                  원문을 입력하거나 저장된 결과를 선택하면 여기에 결과가 표시됩니다.
                 </p>
               </div>
             )}
           </div>
 
           <section className="mt-6">
-            <h3 className="text-sm font-semibold text-ink">저장된 결과</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-ink">저장된 결과</h3>
+              <button
+                type="button"
+                onClick={loadSavedResults}
+                className="text-xs font-semibold text-accent"
+              >
+                새로고침
+              </button>
+            </div>
             <div className="mt-3 space-y-2">
               {savedResults.length > 0 ? (
-                savedResults.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-md border border-line bg-white px-3 py-3"
-                  >
-                    <p className="truncate text-sm font-semibold text-ink">
-                      {item.project_name}
-                    </p>
-                    <p className="mt-1 text-xs text-muted">
-                      {item.brand_name} ·{" "}
-                      {workTypes.find((type) => type.id === item.work_type)?.label}
-                    </p>
-                  </div>
-                ))
+                savedResults.map((item) => {
+                  const isActive = item.id === selectedSavedId;
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleSelectSavedResult(item)}
+                      className={`w-full rounded-md border px-3 py-3 text-left transition ${
+                        isActive
+                          ? "border-accent bg-teal-50 shadow-panel"
+                          : "border-line bg-white hover:border-accent/50"
+                      }`}
+                    >
+                      <span className="block truncate text-sm font-semibold text-ink">
+                        {item.project_name}
+                      </span>
+                      <span className="mt-1 flex items-center justify-between gap-3 text-xs text-muted">
+                        <span>{getWorkTypeLabel(item.work_type)}</span>
+                        <span>{formatDate(item.created_at)}</span>
+                      </span>
+                    </button>
+                  );
+                })
               ) : (
                 <p className="rounded-md border border-line bg-white px-3 py-3 text-sm text-muted">
                   저장하면 팀의 최근 결과가 여기에 표시됩니다.

@@ -16,12 +16,15 @@ const isWorkType = (value: unknown): value is WorkType =>
   typeof value === "string" &&
   ["brief", "proposal", "sns", "minutes", "report"].includes(value);
 
+const resultSelect =
+  "id, project_name, brand_name, work_type, primary_result, outputs, created_at";
+
 export async function GET() {
   try {
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from("marketing_outputs")
-      .select("id, project_name, brand_name, work_type, created_at")
+      .select(resultSelect)
       .order("created_at", { ascending: false })
       .limit(8);
 
@@ -79,7 +82,7 @@ export async function POST(request: Request) {
         primary_result: primaryResult.trim(),
         outputs: outputs ?? []
       })
-      .select("id, project_name, brand_name, work_type, created_at")
+      .select(resultSelect)
       .single();
 
     if (error) {
