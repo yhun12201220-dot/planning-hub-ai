@@ -283,12 +283,35 @@ export function getPreferredResultText(item: Partial<SavedResult>) {
   return item.result_text || item.result || item.primary_result || "";
 }
 
+export function getSavedResultDisplayText(item: Partial<SavedResult>) {
+  return (
+    item.result_text ||
+    item.primary_result ||
+    item.outputs?.[0]?.result ||
+    item.result ||
+    ""
+  );
+}
+
 export function normalizeSavedOutputs(item: Partial<SavedResult>): AiOutput[] {
+  const fallbackResult = getSavedResultDisplayText(item);
+
   if (Array.isArray(item.outputs) && item.outputs.length > 0) {
+    const firstOutput = item.outputs[0];
+
+    if (firstOutput && firstOutput.result !== fallbackResult && fallbackResult) {
+      return [
+        {
+          ...firstOutput,
+          result: fallbackResult,
+          status: "success"
+        },
+        ...item.outputs.slice(1)
+      ];
+    }
+
     return item.outputs;
   }
-
-  const fallbackResult = getPreferredResultText(item);
 
   return fallbackResult
     ? [

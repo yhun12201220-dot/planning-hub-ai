@@ -11,6 +11,7 @@ import {
   TransformActionId,
   WorkType,
   getPreferredResultText,
+  getSavedResultDisplayText,
   getWorkTypeLabel,
   initialFormState,
   mapTransformToPayload,
@@ -466,7 +467,7 @@ export default function Home() {
   const handleTransform = async (action: TransformActionId) => {
     const context = getCurrentContext();
     const baseResultText =
-      activeOutput?.result || getPreferredResultText(selectedResult ?? {});
+      activeOutput?.result || getSavedResultDisplayText(selectedResult ?? {});
 
     if (!baseResultText.trim()) {
       setError("변환할 결과 텍스트가 없습니다.");

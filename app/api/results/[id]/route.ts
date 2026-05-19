@@ -54,7 +54,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .from("marketing_outputs")
       .update(updates)
       .eq("id", id)
-      .eq("is_deleted", false)
+      .or("is_deleted.eq.false,is_deleted.is.null")
       .select(
         "id, title, project_name, brand_name, work_type, tone, target, objective, key_message, required_points, excluded_points, reference_text, source_text, result_text, result, primary_result, status, tags, outputs, created_at, updated_at, is_deleted"
       )
@@ -95,7 +95,7 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
         updated_at: new Date().toISOString()
       })
       .eq("id", id)
-      .eq("is_deleted", false);
+      .or("is_deleted.eq.false,is_deleted.is.null");
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

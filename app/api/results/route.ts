@@ -6,7 +6,6 @@ import {
   ToneOption,
   WorkType,
   buildDefaultTitle,
-  getPreferredResultText,
   isResultStatus,
   isToneOption,
   isWorkType,
@@ -28,7 +27,6 @@ type SaveRequest = {
   sourceText?: string;
   primaryResult?: string;
   resultText?: string;
-  result?: string;
   status?: ResultStatus;
   tags?: string[] | string;
   outputs?: unknown;
@@ -49,7 +47,6 @@ const resultSelect = [
   "reference_text",
   "source_text",
   "result_text",
-  "result",
   "primary_result",
   "status",
   "tags",
@@ -60,9 +57,14 @@ const resultSelect = [
 ].join(", ");
 
 function mapRow(row: SavedResult) {
+  const displayResult =
+    row.result_text || row.primary_result || row.outputs?.[0]?.result || "";
+
   return {
     ...row,
-    result_text: getPreferredResultText(row)
+    displayTitle: row.title || row.project_name || "무제 결과",
+    displayResult,
+    previewText: displayResult.slice(0, 120)
   };
 }
 
@@ -72,7 +74,7 @@ export async function GET() {
     const { data, error } = await supabase
       .from("marketing_outputs")
       .select(resultSelect)
-      .eq("is_deleted", false)
+      .or("is_deleted.eq.false,is_deleted.is.null")
       .order("created_at", { ascending: false })
       .limit(100);
 
@@ -84,6 +86,8 @@ export async function GET() {
       results: ((data ?? []) as unknown as SavedResult[]).map(mapRow)
     });
   } catch (error) {
+    console.error("Results API Error", error);
+
     return NextResponse.json(
       {
         error:
@@ -115,10 +119,7 @@ export async function POST(request: Request) {
     }
 
     const preferredResult =
-      body.resultText?.trim() ||
-      body.primaryResult?.trim() ||
-      body.result?.trim() ||
-      "";
+      body.resultText?.trim() || body.primaryResult?.trim() || "";
 
     if (!preferredResult) {
       return NextResponse.json(
@@ -130,11 +131,13 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
     const title =
       body.title?.trim() ||
-      buildDefaultTitle({
-        projectName: body.projectName,
-        brandName: body.brandName,
-        workType: body.workType
-      });
+      (body.projectName?.trim()
+        ? `${body.projectName.trim()} - ${body.workType}`
+        : buildDefaultTitle({
+            projectName: body.projectName,
+            brandName: body.brandName,
+            workType: body.workType
+          }));
 
     const { data, error } = await supabase
       .from("marketing_outputs")
@@ -152,12 +155,12 @@ export async function POST(request: Request) {
         reference_text: body.referenceText?.trim() ?? "",
         source_text: body.sourceText.trim(),
         result_text: preferredResult,
-        result: preferredResult,
         primary_result: preferredResult,
         status: isResultStatus(body.status) ? body.status : "초안",
         tags: parseTags(body.tags),
         outputs: body.outputs ?? [],
-        is_deleted: false
+        is_deleted: false,
+        updated_at: new Date().toISOString()
       })
       .select(resultSelect)
       .single();
@@ -170,6 +173,8 @@ export async function POST(request: Request) {
       result: mapRow(data as unknown as SavedResult)
     });
   } catch (error) {
+    console.error("Results API Error", error);
+
     return NextResponse.json(
       {
         error:
