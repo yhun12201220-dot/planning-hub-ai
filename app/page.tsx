@@ -215,6 +215,7 @@ export default function Home() {
 
     await navigator.clipboard.writeText(activeOutput.result);
     setCopyState("복사됨");
+    setNotice("AI 결과가 클립보드에 복사되었습니다.");
     window.setTimeout(() => setCopyState("복사"), 1400);
   };
 
@@ -280,6 +281,36 @@ export default function Home() {
     setNotice(`${item.project_name} 저장 결과를 불러왔습니다.`);
     setError("");
     setCopyState("복사");
+  };
+
+  const handleDeleteResult = async (id: string) => {
+    const confirmed = window.confirm("이 저장 결과를 삭제할까요?");
+
+    if (!confirmed) return;
+
+    setError("");
+    setNotice("");
+
+    const response = await fetch(`/api/results/${id}`, {
+      method: "DELETE"
+    });
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setError(payload.error ?? "저장 결과 삭제에 실패했습니다.");
+      return;
+    }
+
+    if (selectedSavedId === id) {
+      setSelectedSavedId(null);
+      setOutputs([]);
+      setActiveProvider("openai");
+      setCopyState("복사");
+    }
+
+    setNotice("저장 결과가 삭제되었습니다.");
+    await loadSavedResults();
   };
 
   return (
@@ -540,29 +571,65 @@ export default function Home() {
                   const isActive = item.id === selectedSavedId;
 
                   return (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => handleSelectSavedResult(item)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") {
+                          return;
+                        }
+
+                        event.preventDefault();
+                        handleSelectSavedResult(item);
+                      }}
                       className={`w-full rounded-md border px-3 py-3 text-left transition ${
                         isActive
                           ? "border-accent bg-teal-50 shadow-panel"
                           : "border-line bg-white hover:border-accent/50"
                       }`}
                     >
-                      <span className="block truncate text-sm font-semibold text-ink">
-                        {item.project_name}
+                      <span className="flex items-start justify-between gap-3">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-ink">
+                            {item.project_name}
+                          </span>
+                          <span className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                            <span className="rounded border border-teal-200 bg-teal-50 px-2 py-1 font-semibold text-teal-800">
+                              {getWorkTypeLabel(item.work_type)}
+                            </span>
+                            <span className="text-muted">
+                              {formatDate(item.created_at)}
+                            </span>
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDeleteResult(item.id);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") {
+                              return;
+                            }
+
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void handleDeleteResult(item.id);
+                          }}
+                          className="shrink-0 rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+                        >
+                          삭제
+                        </button>
                       </span>
-                      <span className="mt-1 flex items-center justify-between gap-3 text-xs text-muted">
-                        <span>{getWorkTypeLabel(item.work_type)}</span>
-                        <span>{formatDate(item.created_at)}</span>
-                      </span>
-                    </button>
+                    </div>
                   );
                 })
               ) : (
                 <p className="rounded-md border border-line bg-white px-3 py-3 text-sm text-muted">
-                  저장하면 팀의 최근 결과가 여기에 표시됩니다.
+                  저장된 결과가 없습니다.
                 </p>
               )}
             </div>
