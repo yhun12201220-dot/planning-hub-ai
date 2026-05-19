@@ -94,46 +94,51 @@ async function generateOpenAi(
     },
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      instructions,
-      input
+      input,
+      instructions
     })
   });
 
-if (!response.ok) {
-  const errorText = await response.text();
+  if (!response.ok) {
+    const errorText = await response.text();
 
-  console.error("OpenAI API Error", {
-    status: response.status,
-    statusText: response.statusText,
-    body: errorText
-  });
+    console.error("OpenAI API Error", {
+      status: response.status,
+      statusText: response.statusText,
+      body: errorText
+    });
+
+    return {
+      provider: "openai",
+      label: "OpenAI",
+      result: "",
+      status: "error",
+      error: `OpenAI API 요청 실패: ${response.status} ${errorText}`
+    };
+  }
+
+  const payload = await response.json();
+
+  console.log(
+    "OpenAI API Success Payload",
+    JSON.stringify(payload, null, 2)
+  );
+
+  const outputText =
+    payload.output_text ??
+    payload.output?.[0]?.content?.[0]?.text ??
+    payload.output?.[0]?.content?.[0]?.value ??
+    "";
 
   return {
     provider: "openai",
     label: "OpenAI",
-    result: "",
-    status: "error",
-    error: `OpenAI API 요청 실패: ${response.status} ${errorText}`
+    result: outputText,
+    status: outputText ? "success" : "error",
+    error: outputText
+      ? undefined
+      : "OpenAI 응답은 성공했지만 결과 텍스트를 찾지 못했습니다."
   };
-
-
- const payload = await response.json();
-
-console.log("OpenAI API Success Payload", JSON.stringify(payload, null, 2));
-
-const outputText =
-  payload.output_text ??
-  payload.output?.[0]?.content?.[0]?.text ??
-  payload.output?.[0]?.content?.[0]?.value ??
-  "";
-
-return {
-  provider: "openai",
-  label: "OpenAI",
-  result: outputText,
-  status: outputText ? "success" : "error",
-  error: outputText ? undefined : "OpenAI 응답은 성공했지만 결과 텍스트를 찾지 못했습니다."
-};
 }
 async function generateClaude(
   instructions: string,
