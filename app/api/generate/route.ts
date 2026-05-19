@@ -1,76 +1,20 @@
 import { NextResponse } from "next/server";
+import {
+  AiOutput,
+  MarketingFormState,
+  TransformActionId,
+  ToneOption,
+  WorkType,
+  buildPromptInput,
+  buildPromptInstructions,
+  isToneOption,
+  isWorkType
+} from "@/lib/marketing";
 
-type WorkType = "brief" | "proposal" | "sns" | "minutes" | "report";
-type Provider = "openai" | "claude";
-
-type GenerateRequest = {
-  projectName?: string;
-  brandName?: string;
+type GenerateRequest = Partial<MarketingFormState> & {
   workType?: WorkType;
-  sourceText?: string;
+  transformAction?: TransformActionId | null;
 };
-
-type AiOutput = {
-  provider: Provider;
-  label: string;
-  result: string;
-  status: "success" | "skipped" | "error";
-  error?: string;
-};
-
-const workTypePrompts: Record<WorkType, string> = {
-  brief: [
-    "광고주 브리프를 마케팅 실무자가 바로 이해할 수 있게 정리한다.",
-    "반드시 포함할 항목: 프로젝트 개요, 목표, 타깃, 핵심 메시지, 필수 요구사항, 확인 필요 사항.",
-    "불명확한 내용은 추정하지 말고 '확인 필요'로 분리한다."
-  ].join("\n"),
-  proposal: [
-    "마케팅 기획안 초안을 만든다.",
-    "반드시 포함할 항목: 캠페인 목표, 타깃 인사이트, 핵심 컨셉, 채널 전략, 실행 아이디어, 운영 체크리스트.",
-    "실무자가 내부 공유 문서로 바로 옮길 수 있는 간결한 구조로 작성한다."
-  ].join("\n"),
-  sns: [
-    "SNS 게시물 멘션 초안을 생성한다.",
-    "반드시 포함할 항목: 톤앤매너 제안, 짧은 버전 3개, 긴 버전 2개, 해시태그, CTA.",
-    "과장 표현을 줄이고 브랜드 맥락에 맞는 자연스러운 문장으로 쓴다."
-  ].join("\n"),
-  minutes: [
-    "회의록을 정리한다.",
-    "반드시 포함할 항목: 회의 요약, 주요 논의, 결정 사항, 액션 아이템, 담당자/기한, 후속 확인 사항.",
-    "원문에 없는 담당자나 일정은 임의로 만들지 않는다."
-  ].join("\n"),
-  report: [
-    "광고 성과 데이터와 보고 내용을 바탕으로 인사이트를 생성한다.",
-    "반드시 포함할 항목: 핵심 성과 요약, 긍정 요인, 리스크, 원인 가설, 다음 액션, 보고용 한 줄 코멘트.",
-    "수치가 있으면 그대로 인용하고, 해석과 사실을 구분한다."
-  ].join("\n")
-};
-
-const isWorkType = (value: unknown): value is WorkType =>
-  typeof value === "string" && value in workTypePrompts;
-
-const buildInstructions = (workType: WorkType) =>
-  [
-    "너는 한국어로 일하는 시니어 마케팅 플래너다.",
-    "입력된 원문만 근거로 삼고, 실무자가 바로 복사해 쓸 수 있는 결과물을 만든다.",
-    "문서는 제목, 짧은 요약, 항목별 본문 순서로 작성한다.",
-    workTypePrompts[workType]
-  ].join("\n");
-
-const buildInput = ({
-  projectName,
-  brandName,
-  workType,
-  sourceText
-}: Required<GenerateRequest>) =>
-  [
-    `프로젝트명: ${projectName.trim()}`,
-    `브랜드명: ${brandName.trim()}`,
-    `업무 유형: ${workType}`,
-    "",
-    "원문:",
-    sourceText.trim()
-  ].join("\n");
 
 async function generateOpenAi(
   instructions: string,
@@ -94,36 +38,22 @@ async function generateOpenAi(
     },
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      input,
-      instructions
+      instructions,
+      input
     })
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-
-    console.error("OpenAI API Error", {
-      status: response.status,
-      statusText: response.statusText,
-      body: errorText
-    });
-
     return {
       provider: "openai",
       label: "OpenAI",
       result: "",
       status: "error",
-      error: `OpenAI API 요청 실패: ${response.status} ${errorText}`
+      error: "OpenAI 결과 생성에 실패했습니다."
     };
   }
 
   const payload = await response.json();
-
-  console.log(
-    "OpenAI API Success Payload",
-    JSON.stringify(payload, null, 2)
-  );
-
   const outputText =
     payload.output_text ??
     payload.output?.[0]?.content?.[0]?.text ??
@@ -135,11 +65,10 @@ async function generateOpenAi(
     label: "OpenAI",
     result: outputText,
     status: outputText ? "success" : "error",
-    error: outputText
-      ? undefined
-      : "OpenAI 응답은 성공했지만 결과 텍스트를 찾지 못했습니다."
+    error: outputText ? undefined : "OpenAI 응답에서 결과 텍스트를 찾지 못했습니다."
   };
 }
+
 async function generateClaude(
   instructions: string,
   input: string
@@ -163,7 +92,7 @@ async function generateClaude(
     },
     body: JSON.stringify({
       model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
-      max_tokens: 1800,
+      max_tokens: 2200,
       system: instructions,
       messages: [
         {
@@ -180,7 +109,7 @@ async function generateClaude(
       label: "Claude",
       result: "",
       status: "error",
-      error: "Claude API 요청에 실패했습니다."
+      error: "Claude 결과 생성에 실패했습니다."
     };
   }
 
@@ -198,44 +127,58 @@ async function generateClaude(
     provider: "claude",
     label: "Claude",
     result,
-    status: "success"
+    status: result ? "success" : "error",
+    error: result ? undefined : "Claude 응답에서 결과 텍스트를 찾지 못했습니다."
   };
 }
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as GenerateRequest;
-    const { projectName, brandName, workType, sourceText } = body;
 
-    if (!projectName?.trim() || !brandName?.trim() || !sourceText?.trim()) {
-      return NextResponse.json(
-        { error: "프로젝트명, 브랜드명, 원문을 모두 입력해 주세요." },
-        { status: 400 }
-      );
-    }
-
-    if (!isWorkType(workType)) {
+    if (!isWorkType(body.workType)) {
       return NextResponse.json(
         { error: "지원하지 않는 업무 유형입니다." },
         { status: 400 }
       );
     }
 
-    const instructions = buildInstructions(workType);
-    const input = buildInput({
-      projectName,
-      brandName,
-      workType,
-      sourceText
+    if (!body.sourceText?.trim()) {
+      return NextResponse.json(
+        { error: "원문 입력을 채워 주세요." },
+        { status: 400 }
+      );
+    }
+
+    const tone: ToneOption = isToneOption(body.tone) ? body.tone : "기본";
+    const promptInput = buildPromptInput({
+      projectName: body.projectName ?? "",
+      brandName: body.brandName ?? "",
+      workType: body.workType,
+      tone,
+      target: body.target ?? "",
+      objective: body.objective ?? "",
+      keyMessage: body.keyMessage ?? "",
+      requiredPoints: body.requiredPoints ?? "",
+      excludedPoints: body.excludedPoints ?? "",
+      referenceText: body.referenceText ?? "",
+      sourceText: body.sourceText
+    });
+    const instructions = buildPromptInstructions({
+      workType: body.workType,
+      tone,
+      transformAction: body.transformAction ?? null
     });
 
     const settled = await Promise.allSettled([
-      generateOpenAi(instructions, input),
-      generateClaude(instructions, input)
+      generateOpenAi(instructions, promptInput),
+      generateClaude(instructions, promptInput)
     ]);
 
     const outputs = settled.map((item, index): AiOutput => {
-      if (item.status === "fulfilled") return item.value;
+      if (item.status === "fulfilled") {
+        return item.value;
+      }
 
       return {
         provider: index === 0 ? "openai" : "claude",
@@ -246,13 +189,10 @@ export async function POST(request: Request) {
       };
     });
 
-    const hasResult = outputs.some((output) => output.status === "success");
-
-    if (!hasResult) {
+    if (!outputs.some((output) => output.status === "success" && output.result)) {
       return NextResponse.json(
         {
-          error:
-            "사용 가능한 AI 결과가 없습니다. API 키 설정을 확인해 주세요.",
+          error: "사용 가능한 AI 결과가 없습니다. API 키와 입력값을 확인해 주세요.",
           outputs
         },
         { status: 500 }

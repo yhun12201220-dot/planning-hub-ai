@@ -1,125 +1,83 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-
-type WorkType = "brief" | "proposal" | "sns" | "minutes" | "report";
-type Provider = "openai" | "claude";
-
-type FormState = {
-  projectName: string;
-  brandName: string;
-  workType: WorkType;
-  sourceText: string;
-};
-
-type AiOutput = {
-  provider: Provider;
-  label: string;
-  result: string;
-  status: "success" | "skipped" | "error";
-  error?: string;
-};
-
-type SavedResult = {
-  id: string;
-  project_name: string;
-  brand_name: string;
-  work_type: WorkType;
-  primary_result: string;
-  outputs: AiOutput[] | null;
-  created_at: string;
-};
-
-const workTypes: Array<{
-  id: WorkType;
-  label: string;
-  description: string;
-}> = [
-  {
-    id: "brief",
-    label: "브리프 정리",
-    description: "요구사항, 타깃, 핵심 메시지를 정리"
-  },
-  {
-    id: "proposal",
-    label: "기획안 생성",
-    description: "캠페인 방향과 실행안을 구조화"
-  },
-  {
-    id: "sns",
-    label: "SNS 멘션 생성",
-    description: "채널에 맞는 게시글 초안 작성"
-  },
-  {
-    id: "minutes",
-    label: "회의록 정리",
-    description: "논의 내용과 액션 아이템 추출"
-  },
-  {
-    id: "report",
-    label: "보고서 인사이트 생성",
-    description: "성과 데이터에서 시사점 도출"
-  }
-];
-
-const initialForm: FormState = {
-  projectName: "",
-  brandName: "",
-  workType: "brief",
-  sourceText: ""
-};
+import {
+  AiOutput,
+  MarketingFormState,
+  ResultStatus,
+  SavedResult,
+  SearchFilters,
+  ToneOption,
+  TransformActionId,
+  WorkType,
+  getPreferredResultText,
+  getWorkTypeLabel,
+  initialFormState,
+  mapTransformToPayload,
+  normalizeSavedOutputs,
+  parseTags,
+  resultStatusOptions,
+  toneOptions,
+  transformActions,
+  workTypeOptions
+} from "@/lib/marketing";
 
 const workflowSteps = [
   "업무 유형 선택",
-  "브리프 입력",
-  "AI 생성",
-  "결과 저장",
-  "최근 결과 표시"
+  "실무 정보 입력",
+  "AI 결과 생성",
+  "저장/변환",
+  "재활용"
 ];
 
-const getWorkTypeLabel = (workType: WorkType) =>
-  workTypes.find((item) => item.id === workType)?.label ?? workType;
+const initialFilters: SearchFilters = {
+  query: "",
+  workType: "all",
+  status: "all",
+  brand: "",
+  tag: "",
+  sort: "latest"
+};
 
-const formatDate = (value: string) =>
-  new Intl.DateTimeFormat("ko-KR", {
+const formatDate = (value: string | null) => {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
-
-const normalizeSavedOutputs = (item: SavedResult): AiOutput[] => {
-  if (Array.isArray(item.outputs) && item.outputs.length > 0) {
-    return item.outputs;
-  }
-
-  return [
-    {
-      provider: "openai",
-      label: "Saved",
-      result: item.primary_result,
-      status: "success"
-    }
-  ];
 };
 
+const getDisplayTitle = (item: SavedResult) =>
+  item.title?.trim() || item.project_name || item.brand_name || "저장 결과";
+
 export default function Home() {
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<MarketingFormState>(initialFormState);
   const [outputs, setOutputs] = useState<AiOutput[]>([]);
-  const [activeProvider, setActiveProvider] = useState<Provider>("openai");
+  const [activeProvider, setActiveProvider] = useState<"openai" | "claude">(
+    "openai"
+  );
   const [savedResults, setSavedResults] = useState<SavedResult[]>([]);
-  const [selectedSavedId, setSelectedSavedId] = useState<string | null>(null);
+  const [selectedResult, setSelectedResult] = useState<SavedResult | null>(null);
+  const [filters, setFilters] = useState<SearchFilters>(initialFilters);
+  const [detailTitle, setDetailTitle] = useState("");
+  const [detailStatus, setDetailStatus] = useState<ResultStatus>("초안");
+  const [detailTagsInput, setDetailTagsInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpdatingDetail, setIsUpdatingDetail] = useState(false);
+  const [isTransforming, setIsTransforming] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [copyState, setCopyState] = useState("복사");
+  const [copyState, setCopyState] = useState("복사하기");
   const [hasSavedCurrentResult, setHasSavedCurrentResult] = useState(false);
 
-  const selectedWorkType = useMemo(
-    () => workTypes.find((item) => item.id === form.workType) ?? workTypes[0],
-    [form.workType]
-  );
+  const selectedWorkType =
+    workTypeOptions.find((item) => item.value === form.workType) ??
+    workTypeOptions[0];
 
   const activeOutput =
     outputs.find((output) => output.provider === activeProvider) ?? outputs[0];
@@ -128,82 +86,179 @@ export default function Home() {
     (output) => output.status === "success" && output.result
   );
 
+  const isBusy = isLoading || isTransforming;
+
   const currentStep = useMemo(() => {
-    if (!form.workType) return 0;
-    if (!form.projectName || !form.brandName || form.sourceText.length < 10) {
-      return 1;
-    }
+    if (!form.sourceText.trim()) return 1;
     if (successfulOutputs.length === 0) return 2;
     if (!hasSavedCurrentResult) return 3;
     return 4;
-  }, [
-    form.brandName,
-    form.projectName,
-    form.sourceText.length,
-    form.workType,
-    hasSavedCurrentResult,
-    successfulOutputs.length
-  ]);
+  }, [form.sourceText, hasSavedCurrentResult, successfulOutputs.length]);
+
+  const brandOptions = useMemo(() => {
+    const brands = new Set(
+      savedResults
+        .map((item) => item.brand_name.trim())
+        .filter(Boolean)
+    );
+
+    return Array.from(brands).sort((a, b) => a.localeCompare(b, "ko"));
+  }, [savedResults]);
+
+  const filteredResults = useMemo(() => {
+    const query = filters.query.trim().toLowerCase();
+    const tagQuery = filters.tag.trim().toLowerCase();
+
+    const nextResults = savedResults.filter((item) => {
+      if (filters.workType !== "all" && item.work_type !== filters.workType) {
+        return false;
+      }
+
+      if (filters.status !== "all" && item.status !== filters.status) {
+        return false;
+      }
+
+      if (filters.brand.trim()) {
+        const sameBrand =
+          item.brand_name.toLowerCase() === filters.brand.trim().toLowerCase();
+
+        if (!sameBrand) {
+          return false;
+        }
+      }
+
+      if (tagQuery) {
+        const tagText = (item.tags ?? []).join(",").toLowerCase();
+
+        if (!tagText.includes(tagQuery)) {
+          return false;
+        }
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      const haystack = [
+        item.title ?? "",
+        item.project_name,
+        item.brand_name,
+        item.source_text,
+        getPreferredResultText(item),
+        (item.tags ?? []).join(",")
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(query);
+    });
+
+    nextResults.sort((left, right) => {
+      const leftTime = new Date(left.created_at).getTime();
+      const rightTime = new Date(right.created_at).getTime();
+
+      return filters.sort === "latest"
+        ? rightTime - leftTime
+        : leftTime - rightTime;
+    });
+
+    return nextResults;
+  }, [filters, savedResults]);
 
   useEffect(() => {
-    void loadSavedResults();
+    void fetchSavedResults();
   }, []);
 
-  const updateField = <K extends keyof FormState>(
+  useEffect(() => {
+    if (!selectedResult) {
+      setDetailTitle("");
+      setDetailStatus("초안");
+      setDetailTagsInput("");
+      return;
+    }
+
+    setDetailTitle(getDisplayTitle(selectedResult));
+    setDetailStatus(selectedResult.status ?? "초안");
+    setDetailTagsInput((selectedResult.tags ?? []).join(", "));
+  }, [selectedResult]);
+
+  const updateField = <K extends keyof MarketingFormState>(
     field: K,
-    value: FormState[K]
+    value: MarketingFormState[K]
   ) => {
     setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const loadSavedResults = async () => {
+  const updateFilter = <K extends keyof SearchFilters>(
+    field: K,
+    value: SearchFilters[K]
+  ) => {
+    setFilters((current) => ({ ...current, [field]: value }));
+  };
+
+  const fetchSavedResults = async () => {
     const response = await fetch("/api/results");
     const payload = await response.json();
 
     if (!response.ok) {
-      setNotice("저장 목록을 불러오지 못했습니다.");
+      setError(payload.error ?? "저장 결과 목록을 불러오지 못했습니다.");
       return;
     }
 
     setSavedResults((payload.results ?? []) as SavedResult[]);
   };
 
+  const handleGenerate = async (
+    payload: Partial<MarketingFormState> & {
+      workType: WorkType;
+      sourceText: string;
+      tone: ToneOption;
+      transformAction?: TransformActionId | null;
+    }
+  ) => {
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "AI 결과 생성에 실패했습니다.");
+    }
+
+    const nextOutputs = (data.outputs ?? []) as AiOutput[];
+    const firstSuccess = nextOutputs.find(
+      (output) => output.status === "success" && output.result
+    );
+
+    setOutputs(nextOutputs);
+    setActiveProvider(firstSuccess?.provider ?? "openai");
+    return nextOutputs;
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
     setNotice("");
-    setOutputs([]);
-    setSelectedSavedId(null);
+    setSelectedResult(null);
     setHasSavedCurrentResult(false);
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(form)
+      await handleGenerate({
+        ...form,
+        transformAction: null
       });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? "결과 생성에 실패했습니다.");
-      }
-
-      const nextOutputs = (payload.outputs ?? []) as AiOutput[];
-      setOutputs(nextOutputs);
-      const firstSuccess = nextOutputs.find(
-        (output) => output.status === "success"
-      );
-      setActiveProvider(firstSuccess?.provider ?? "openai");
-      setNotice("AI 결과가 생성되었습니다. 확인 후 저장하면 최근 결과에 표시됩니다.");
+      setNotice("AI 결과가 생성되었습니다. 저장하거나 다른 형식으로 변환할 수 있습니다.");
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : "알 수 없는 오류가 발생했습니다."
+          : "AI 결과 생성 중 오류가 발생했습니다."
       );
     } finally {
       setIsLoading(false);
@@ -211,27 +266,50 @@ export default function Home() {
   };
 
   const handleCopy = async () => {
-    if (!activeOutput?.result) return;
+    const resultText = activeOutput?.result;
 
-    await navigator.clipboard.writeText(activeOutput.result);
-    setCopyState("복사됨");
+    if (!resultText) return;
+
+    await navigator.clipboard.writeText(resultText);
+    setCopyState("복사 완료");
     setNotice("AI 결과가 클립보드에 복사되었습니다.");
-    window.setTimeout(() => setCopyState("복사"), 1400);
+    window.setTimeout(() => setCopyState("복사하기"), 1400);
   };
 
   const handleReset = () => {
-    setForm(initialForm);
+    setForm(initialFormState);
     setOutputs([]);
-    setSelectedSavedId(null);
+    setSelectedResult(null);
     setError("");
     setNotice("");
-    setCopyState("복사");
+    setCopyState("복사하기");
     setHasSavedCurrentResult(false);
+  };
+
+  const getCurrentContext = () => {
+    if (selectedResult) {
+      return {
+        projectName: selectedResult.project_name ?? "",
+        brandName: selectedResult.brand_name ?? "",
+        workType: selectedResult.work_type,
+        tone: (selectedResult.tone as ToneOption) ?? "기본",
+        target: selectedResult.target ?? "",
+        objective: selectedResult.objective ?? "",
+        keyMessage: selectedResult.key_message ?? "",
+        requiredPoints: selectedResult.required_points ?? "",
+        excludedPoints: selectedResult.excluded_points ?? "",
+        referenceText: selectedResult.reference_text ?? "",
+        sourceText: selectedResult.source_text ?? ""
+      } satisfies MarketingFormState;
+    }
+
+    return form;
   };
 
   const handleSave = async () => {
     if (successfulOutputs.length === 0) return;
 
+    const context = getCurrentContext();
     setIsSaving(true);
     setError("");
     setNotice("");
@@ -242,12 +320,23 @@ export default function Home() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        projectName: form.projectName,
-        brandName: form.brandName,
-        workType: form.workType,
-        sourceText: form.sourceText,
-        outputs,
-        primaryResult: activeOutput?.result ?? successfulOutputs[0].result
+        title: selectedResult ? detailTitle : undefined,
+        projectName: context.projectName,
+        brandName: context.brandName,
+        workType: context.workType,
+        tone: context.tone,
+        target: context.target,
+        objective: context.objective,
+        keyMessage: context.keyMessage,
+        requiredPoints: context.requiredPoints,
+        excludedPoints: context.excludedPoints,
+        referenceText: context.referenceText,
+        sourceText: context.sourceText,
+        resultText: activeOutput?.result ?? successfulOutputs[0].result,
+        primaryResult: activeOutput?.result ?? successfulOutputs[0].result,
+        status: selectedResult?.status ?? "초안",
+        tags: selectedResult?.tags ?? [],
+        outputs
       })
     });
 
@@ -260,13 +349,11 @@ export default function Home() {
       return;
     }
 
-    setNotice("결과물이 저장되었습니다.");
+    const savedItem = payload.result as SavedResult;
+    setSelectedResult(savedItem);
     setHasSavedCurrentResult(true);
-    await loadSavedResults();
-
-    if (payload.result?.id) {
-      setSelectedSavedId(payload.result.id);
-    }
+    setNotice("저장 결과가 업데이트되었습니다.");
+    await fetchSavedResults();
   };
 
   const handleSelectSavedResult = (item: SavedResult) => {
@@ -276,11 +363,11 @@ export default function Home() {
     );
 
     setOutputs(restoredOutputs);
-    setActiveProvider(firstSuccess?.provider ?? restoredOutputs[0]?.provider ?? "openai");
-    setSelectedSavedId(item.id);
-    setNotice(`${item.project_name} 저장 결과를 불러왔습니다.`);
+    setActiveProvider(firstSuccess?.provider ?? "openai");
+    setSelectedResult(item);
     setError("");
-    setCopyState("복사");
+    setNotice(`${getDisplayTitle(item)}를 불러왔습니다.`);
+    setCopyState("복사하기");
   };
 
   const handleDeleteResult = async (id: string) => {
@@ -294,7 +381,6 @@ export default function Home() {
     const response = await fetch(`/api/results/${id}`, {
       method: "DELETE"
     });
-
     const payload = await response.json();
 
     if (!response.ok) {
@@ -302,20 +388,127 @@ export default function Home() {
       return;
     }
 
-    if (selectedSavedId === id) {
-      setSelectedSavedId(null);
+    if (selectedResult?.id === id) {
+      setSelectedResult(null);
       setOutputs([]);
       setActiveProvider("openai");
-      setCopyState("복사");
+      setCopyState("복사하기");
     }
 
     setNotice("저장 결과가 삭제되었습니다.");
-    await loadSavedResults();
+    await fetchSavedResults();
+  };
+
+  const handleUpdateSelectedResult = async () => {
+    if (!selectedResult) return;
+
+    setIsUpdatingDetail(true);
+    setError("");
+    setNotice("");
+
+    const response = await fetch(`/api/results/${selectedResult.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        title: detailTitle,
+        status: detailStatus,
+        tags: detailTagsInput
+      })
+    });
+
+    setIsUpdatingDetail(false);
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setError(payload.error ?? "상세 정보 저장에 실패했습니다.");
+      return;
+    }
+
+    const updatedItem = payload.result as SavedResult;
+    setSelectedResult(updatedItem);
+    setNotice("상태와 태그가 저장되었습니다.");
+    await fetchSavedResults();
+  };
+
+  const handleRegenerate = async () => {
+    const context = getCurrentContext();
+
+    if (!context.sourceText.trim()) {
+      setError("다시 생성할 원문 입력이 없습니다.");
+      return;
+    }
+
+    setIsTransforming(true);
+    setError("");
+    setNotice("");
+    setSelectedResult(null);
+    setHasSavedCurrentResult(false);
+
+    try {
+      await handleGenerate({
+        ...context,
+        transformAction: null
+      });
+      setNotice("현재 입력 기준으로 결과를 다시 생성했습니다.");
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "다시 생성 중 오류가 발생했습니다."
+      );
+    } finally {
+      setIsTransforming(false);
+    }
+  };
+
+  const handleTransform = async (action: TransformActionId) => {
+    const context = getCurrentContext();
+    const baseResultText =
+      activeOutput?.result || getPreferredResultText(selectedResult ?? {});
+
+    if (!baseResultText.trim()) {
+      setError("변환할 결과 텍스트가 없습니다.");
+      return;
+    }
+
+    const mapped = mapTransformToPayload(action);
+    setIsTransforming(true);
+    setError("");
+    setNotice("");
+    setSelectedResult(null);
+    setHasSavedCurrentResult(false);
+
+    try {
+      updateField("workType", mapped.workType);
+      updateField("tone", mapped.tone);
+      updateField("requiredPoints", mapped.requiredPoints);
+      updateField("sourceText", baseResultText);
+
+      await handleGenerate({
+        ...context,
+        workType: mapped.workType,
+        tone: mapped.tone,
+        requiredPoints: mapped.requiredPoints,
+        sourceText: baseResultText,
+        transformAction: action
+      });
+      setNotice("결과를 다른 업무 형식으로 변환했습니다.");
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "결과 변환 중 오류가 발생했습니다."
+      );
+    } finally {
+      setIsTransforming(false);
+    }
   };
 
   return (
     <main className="min-h-screen">
-      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[280px_minmax(420px,1fr)_440px]">
+      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[300px_minmax(520px,1fr)_520px]">
         <aside className="border-b border-line bg-ink px-6 py-7 text-white lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-md bg-accent text-lg font-bold">
@@ -328,13 +521,13 @@ export default function Home() {
           </div>
 
           <nav className="mt-10 space-y-2">
-            {workTypes.map((item) => (
+            {workTypeOptions.map((item) => (
               <button
-                key={item.id}
+                key={item.value}
                 type="button"
-                onClick={() => updateField("workType", item.id)}
+                onClick={() => updateField("workType", item.value)}
                 className={`w-full rounded-md px-4 py-3 text-left transition ${
-                  form.workType === item.id
+                  form.workType === item.value
                     ? "bg-white text-ink shadow-panel"
                     : "text-white/78 hover:bg-white/10"
                 }`}
@@ -342,7 +535,7 @@ export default function Home() {
                 <span className="block text-sm font-semibold">{item.label}</span>
                 <span
                   className={`mt-1 block text-xs ${
-                    form.workType === item.id ? "text-muted" : "text-white/48"
+                    form.workType === item.value ? "text-muted" : "text-white/48"
                   }`}
                 >
                   {item.description}
@@ -354,7 +547,7 @@ export default function Home() {
           <section className="mt-10 rounded-md border border-white/10 bg-white/8 p-4">
             <p className="text-sm font-semibold">팀 공용 작업공간</p>
             <p className="mt-2 text-sm leading-6 text-white/66">
-              별도 계정 없이 같은 주소를 쓰는 팀원이 결과를 생성하고 최근 저장본을 함께 확인합니다.
+              같은 주소를 쓰는 팀원이 결과를 생성하고, 상태와 태그를 붙여 다시 활용할 수 있습니다.
             </p>
           </section>
         </aside>
@@ -364,7 +557,7 @@ export default function Home() {
             <div>
               <p className="text-sm font-medium text-accent">Workspace</p>
               <h2 className="mt-1 text-2xl font-semibold text-ink">
-                마케팅 기획 업무 생성
+                마케팅 실무 입력
               </h2>
             </div>
             <div className="rounded-md border border-line bg-panel px-4 py-2 text-sm text-muted">
@@ -399,8 +592,7 @@ export default function Home() {
                   onChange={(event) =>
                     updateField("projectName", event.target.value)
                   }
-                  required
-                  placeholder="예: 2026 봄 캠페인"
+                  placeholder="예: 6월 리텐션 캠페인"
                   className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
                 />
               </label>
@@ -412,28 +604,124 @@ export default function Home() {
                   onChange={(event) =>
                     updateField("brandName", event.target.value)
                   }
-                  required
                   placeholder="예: 브랜드 A"
                   className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
                 />
               </label>
             </div>
 
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-semibold text-ink">업무 유형</span>
+                <select
+                  value={form.workType}
+                  onChange={(event) =>
+                    updateField("workType", event.target.value as WorkType)
+                  }
+                  className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  {workTypeOptions.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-ink">톤앤매너</span>
+                <select
+                  value={form.tone}
+                  onChange={(event) =>
+                    updateField("tone", event.target.value as ToneOption)
+                  }
+                  className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  {toneOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-semibold text-ink">타깃</span>
+                <input
+                  value={form.target}
+                  onChange={(event) => updateField("target", event.target.value)}
+                  placeholder="예: 25-34세 직장인 여성"
+                  className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-ink">목표</span>
+                <input
+                  value={form.objective}
+                  onChange={(event) =>
+                    updateField("objective", event.target.value)
+                  }
+                  placeholder="예: 체험 신청 전환 확대"
+                  className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                />
+              </label>
+            </div>
+
             <label className="block">
-              <span className="text-sm font-semibold text-ink">업무 유형</span>
-              <select
-                value={form.workType}
+              <span className="text-sm font-semibold text-ink">핵심 메시지</span>
+              <textarea
+                value={form.keyMessage}
                 onChange={(event) =>
-                  updateField("workType", event.target.value as WorkType)
+                  updateField("keyMessage", event.target.value)
                 }
-                className="mt-2 h-12 w-full rounded-md border border-line bg-white px-4 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
-              >
-                {workTypes.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                rows={3}
+                placeholder="꼭 전달해야 할 메시지를 적어 주세요."
+                className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+              />
+            </label>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-semibold text-ink">필수 포함 내용</span>
+                <textarea
+                  value={form.requiredPoints}
+                  onChange={(event) =>
+                    updateField("requiredPoints", event.target.value)
+                  }
+                  rows={4}
+                  placeholder="반드시 들어가야 할 포인트를 적어 주세요."
+                  className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-ink">제외할 내용</span>
+                <textarea
+                  value={form.excludedPoints}
+                  onChange={(event) =>
+                    updateField("excludedPoints", event.target.value)
+                  }
+                  rows={4}
+                  placeholder="빼고 싶은 표현이나 제한사항을 적어 주세요."
+                  className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                />
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-sm font-semibold text-ink">참고 레퍼런스</span>
+              <textarea
+                value={form.referenceText}
+                onChange={(event) =>
+                  updateField("referenceText", event.target.value)
+                }
+                rows={4}
+                placeholder="비슷한 사례, 링크 요약, 참고 문구 등을 적어 주세요."
+                className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+              />
             </label>
 
             <label className="block">
@@ -443,8 +731,8 @@ export default function Home() {
                 onChange={(event) => updateField("sourceText", event.target.value)}
                 required
                 minLength={10}
-                rows={14}
-                placeholder="광고주 브리프, 회의록, SNS 콘텐츠 정보, 광고 성과 데이터 등을 붙여넣어 주세요."
+                rows={10}
+                placeholder="브리프, 회의록, 광고 성과, 운영 메모 등 원문을 붙여넣어 주세요."
                 className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
               />
             </label>
@@ -464,7 +752,7 @@ export default function Home() {
             <div className="flex flex-col gap-3 sm:flex-row">
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isBusy}
                 className="h-12 rounded-md bg-accent px-5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-muted"
               >
                 {isLoading ? "생성 중" : "AI 결과 생성"}
@@ -472,7 +760,8 @@ export default function Home() {
               <button
                 type="button"
                 onClick={handleReset}
-                className="h-12 rounded-md border border-line bg-white px-5 text-sm font-semibold text-ink transition hover:border-muted"
+                disabled={isBusy || isSaving}
+                className="h-12 rounded-md border border-line bg-white px-5 text-sm font-semibold text-ink transition hover:border-muted disabled:cursor-not-allowed disabled:text-muted"
               >
                 초기화
               </button>
@@ -484,30 +773,53 @@ export default function Home() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-signal">Output</p>
-              <h2 className="mt-1 text-xl font-semibold text-ink">AI 결과</h2>
+              <h2 className="mt-1 text-xl font-semibold text-ink">AI 결과 및 저장 상세</h2>
             </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={successfulOutputs.length === 0 || isSaving}
-                className="h-10 rounded-md bg-ink px-4 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-muted"
-              >
-                {isSaving ? "저장 중" : "저장"}
-              </button>
-              <button
-                type="button"
-                onClick={handleCopy}
-                disabled={!activeOutput?.result}
-                className="h-10 rounded-md border border-line px-4 text-sm font-semibold text-ink transition hover:border-muted disabled:cursor-not-allowed disabled:text-muted"
-              >
-                {copyState}
-              </button>
+            <div className="text-xs text-muted">
+              {selectedResult ? "저장 결과 상세 보기" : "현재 생성 결과"}
             </div>
           </div>
 
+          <div className="mt-5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleCopy}
+              disabled={!activeOutput?.result}
+              className="h-10 rounded-md border border-line px-4 text-sm font-semibold text-ink transition hover:border-muted disabled:cursor-not-allowed disabled:text-muted"
+            >
+              {copyState}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={successfulOutputs.length === 0 || isSaving || isBusy}
+              className="h-10 rounded-md bg-ink px-4 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-muted"
+            >
+              {isSaving ? "저장 중" : "저장하기"}
+            </button>
+            <button
+              type="button"
+              onClick={handleRegenerate}
+              disabled={isBusy}
+              className="h-10 rounded-md border border-line bg-white px-4 text-sm font-semibold text-ink transition hover:border-muted disabled:cursor-not-allowed disabled:text-muted"
+            >
+              {isTransforming ? "변환 중" : "다시 생성"}
+            </button>
+            {transformActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                onClick={() => void handleTransform(action.id)}
+                disabled={isBusy || !activeOutput?.result}
+                className="h-10 rounded-md border border-line bg-white px-4 text-sm font-semibold text-ink transition hover:border-muted disabled:cursor-not-allowed disabled:text-muted"
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+
           <div className="mt-5 flex gap-2">
-            {(["openai", "claude"] as Provider[]).map((provider) => {
+            {(["openai", "claude"] as const).map((provider) => {
               const output = outputs.find((item) => item.provider === provider);
               const label = provider === "openai" ? "OpenAI" : "Claude";
 
@@ -530,8 +842,8 @@ export default function Home() {
             })}
           </div>
 
-          <div className="mt-4 min-h-[420px] rounded-md border border-line bg-slate-50 p-5">
-            {isLoading ? (
+          <div className="mt-4 min-h-[320px] rounded-md border border-line bg-slate-50 p-5">
+            {isBusy ? (
               <div className="space-y-3">
                 <div className="h-4 w-4/5 animate-pulse rounded bg-slate-200" />
                 <div className="h-4 w-full animate-pulse rounded bg-slate-200" />
@@ -546,29 +858,235 @@ export default function Home() {
                 {activeOutput.error}
               </p>
             ) : (
-              <div className="flex min-h-[370px] items-center justify-center text-center">
+              <div className="flex min-h-[270px] items-center justify-center text-center">
                 <p className="max-w-xs text-sm leading-6 text-muted">
-                  원문을 입력하거나 저장된 결과를 선택하면 여기에 결과가 표시됩니다.
+                  원문을 입력해 결과를 생성하거나 저장된 결과를 선택하면 여기에 표시됩니다.
                 </p>
               </div>
             )}
           </div>
+
+          {selectedResult ? (
+            <section className="mt-6 rounded-md border border-line bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-ink">저장 결과 상세</h3>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteResult(selectedResult.id)}
+                  className="rounded-md border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+                >
+                  삭제하기
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <label className="block">
+                  <span className="text-xs font-semibold text-muted">제목</span>
+                  <input
+                    value={detailTitle}
+                    onChange={(event) => setDetailTitle(event.target.value)}
+                    className="mt-2 h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  />
+                </label>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="block">
+                    <span className="text-xs font-semibold text-muted">상태</span>
+                    <select
+                      value={detailStatus}
+                      onChange={(event) =>
+                        setDetailStatus(event.target.value as ResultStatus)
+                      }
+                      className="mt-2 h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    >
+                      {resultStatusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs font-semibold text-muted">태그</span>
+                    <input
+                      value={detailTagsInput}
+                      onChange={(event) => setDetailTagsInput(event.target.value)}
+                      placeholder="예: 이벤트, 릴스, 광고주공유"
+                      className="mt-2 h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                  </label>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleUpdateSelectedResult()}
+                  disabled={isUpdatingDetail}
+                  className="h-10 rounded-md bg-accent px-4 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-muted"
+                >
+                  {isUpdatingDetail ? "저장 중" : "상태/태그 저장"}
+                </button>
+
+                <div className="grid gap-3 text-sm text-ink">
+                  <div>
+                    <p className="text-xs font-semibold text-muted">프로젝트명</p>
+                    <p className="mt-1">{selectedResult.project_name || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">브랜드명</p>
+                    <p className="mt-1">{selectedResult.brand_name || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">업무 유형</p>
+                    <p className="mt-1">{getWorkTypeLabel(selectedResult.work_type)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">톤앤매너</p>
+                    <p className="mt-1">{selectedResult.tone || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">타깃</p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedResult.target || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">목표</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {selectedResult.objective || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">핵심 메시지</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {selectedResult.key_message || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">필수 포함 내용</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {selectedResult.required_points || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">제외할 내용</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {selectedResult.excluded_points || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">참고 레퍼런스</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {selectedResult.reference_text || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">원문 입력</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {selectedResult.source_text || "-"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section className="mt-6">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">저장된 결과</h3>
               <button
                 type="button"
-                onClick={loadSavedResults}
+                onClick={() => void fetchSavedResults()}
                 className="text-xs font-semibold text-accent"
               >
                 새로고침
               </button>
             </div>
+
+            <div className="mt-3 grid gap-3 rounded-md border border-line bg-white p-3">
+              <input
+                value={filters.query}
+                onChange={(event) => updateFilter("query", event.target.value)}
+                placeholder="프로젝트명, 브랜드명, 제목, 원문, 결과 내용 검색"
+                className="h-11 rounded-md border border-line px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+              />
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <select
+                  value={filters.workType}
+                  onChange={(event) =>
+                    updateFilter("workType", event.target.value as SearchFilters["workType"])
+                  }
+                  className="h-11 rounded-md border border-line px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  <option value="all">업무 유형 전체</option>
+                  {workTypeOptions.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={filters.status}
+                  onChange={(event) =>
+                    updateFilter("status", event.target.value as SearchFilters["status"])
+                  }
+                  className="h-11 rounded-md border border-line px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  <option value="all">상태 전체</option>
+                  {resultStatusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <select
+                  value={filters.brand}
+                  onChange={(event) => updateFilter("brand", event.target.value)}
+                  className="h-11 rounded-md border border-line px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  <option value="">브랜드 전체</option>
+                  {brandOptions.map((brand) => (
+                    <option key={brand} value={brand}>
+                      {brand}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  value={filters.tag}
+                  onChange={(event) => updateFilter("tag", event.target.value)}
+                  placeholder="태그 검색"
+                  className="h-11 rounded-md border border-line px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                />
+
+                <select
+                  value={filters.sort}
+                  onChange={(event) =>
+                    updateFilter("sort", event.target.value as SearchFilters["sort"])
+                  }
+                  className="h-11 rounded-md border border-line px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  <option value="latest">최신순</option>
+                  <option value="oldest">오래된순</option>
+                </select>
+              </div>
+            </div>
+
             <div className="mt-3 space-y-2">
-              {savedResults.length > 0 ? (
-                savedResults.map((item) => {
-                  const isActive = item.id === selectedSavedId;
+              {savedResults.length === 0 ? (
+                <p className="rounded-md border border-line bg-white px-3 py-3 text-sm text-muted">
+                  저장된 결과가 없습니다.
+                </p>
+              ) : filteredResults.length === 0 ? (
+                <p className="rounded-md border border-line bg-white px-3 py-3 text-sm text-muted">
+                  조건에 맞는 저장 결과가 없습니다.
+                </p>
+              ) : (
+                filteredResults.map((item) => {
+                  const isActive = selectedResult?.id === item.id;
 
                   return (
                     <div
@@ -590,32 +1108,38 @@ export default function Home() {
                           : "border-line bg-white hover:border-accent/50"
                       }`}
                     >
-                      <span className="flex items-start justify-between gap-3">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-ink">
-                            {item.project_name}
-                          </span>
-                          <span className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-ink">
+                            {getDisplayTitle(item)}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-muted">
+                            {item.brand_name || "브랜드 미지정"}
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                             <span className="rounded border border-teal-200 bg-teal-50 px-2 py-1 font-semibold text-teal-800">
                               {getWorkTypeLabel(item.work_type)}
                             </span>
-                            <span className="text-muted">
-                              {formatDate(item.created_at)}
+                            <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1 font-semibold text-slate-700">
+                              {item.status ?? "초안"}
                             </span>
-                          </span>
-                        </span>
+                            {(item.tags ?? []).map((tag) => (
+                              <span
+                                key={`${item.id}-${tag}`}
+                                className="rounded border border-line bg-white px-2 py-1 text-slate-600"
+                              >
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
+                            <span>생성 {formatDate(item.created_at)}</span>
+                            <span>수정 {formatDate(item.updated_at)}</span>
+                          </div>
+                        </div>
                         <button
                           type="button"
                           onClick={(event) => {
-                            event.stopPropagation();
-                            void handleDeleteResult(item.id);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" && event.key !== " ") {
-                              return;
-                            }
-
-                            event.preventDefault();
                             event.stopPropagation();
                             void handleDeleteResult(item.id);
                           }}
@@ -623,14 +1147,10 @@ export default function Home() {
                         >
                           삭제
                         </button>
-                      </span>
+                      </div>
                     </div>
                   );
                 })
-              ) : (
-                <p className="rounded-md border border-line bg-white px-3 py-3 text-sm text-muted">
-                  저장된 결과가 없습니다.
-                </p>
               )}
             </div>
           </section>
