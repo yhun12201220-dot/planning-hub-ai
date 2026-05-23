@@ -44,6 +44,8 @@ export type Attachment = {
   uploadedAt: string;
 };
 
+export type AttachmentMetadata = Pick<Attachment, "name" | "type" | "size" | "url">;
+
 export type MarketingFormState = {
   projectName: string;
   brandName: string;
@@ -163,11 +165,14 @@ const workTypeMeta: Record<
     label: string;
     promptTitle: string;
     sections: string[];
+    roleGuide: string;
   }
 > = {
   proposal: {
     label: "기획안 생성",
     promptTitle: "기획안 생성",
+    roleGuide:
+      "광고주 제안서에 바로 넣을 수 있게 배경-전략-실행-성과가 한 흐름으로 이어지게 쓴다.",
     sections: [
       "1. 캠페인 요약",
       "2. 문제 정의 / 배경",
@@ -183,6 +188,8 @@ const workTypeMeta: Record<
   sns: {
     label: "SNS 멘션",
     promptTitle: "SNS 멘션",
+    roleGuide:
+      "실제 SNS 운영자가 바로 게시하거나 일부만 골라 쓸 수 있게 문장 완성도를 높인다.",
     sections: [
       "1. A안: 깔끔한 브랜드 톤",
       "2. B안: 후킹 강한 톤",
@@ -196,6 +203,8 @@ const workTypeMeta: Record<
   minutes: {
     label: "회의록 정리",
     promptTitle: "회의록 정리",
+    roleGuide:
+      "회의 후 팀원이 바로 움직일 수 있게 결정사항, 담당, 마감, 확인 필요 항목을 명확히 쓴다.",
     sections: [
       "1. 회의 개요",
       "2. 핵심 논의사항",
@@ -210,6 +219,8 @@ const workTypeMeta: Record<
   report: {
     label: "보고서 인사이트",
     promptTitle: "보고서 인사이트",
+    roleGuide:
+      "광고주와 내부 팀 모두 이해할 수 있게 성과 해석, 원인, 다음 액션을 근거 중심으로 쓴다.",
     sections: [
       "1. 전체 성과 요약",
       "2. 긍정 포인트",
@@ -223,6 +234,8 @@ const workTypeMeta: Record<
   event: {
     label: "이벤트 구조화",
     promptTitle: "이벤트 구조화",
+    roleGuide:
+      "운영자가 바로 체크하며 실행할 수 있게 참여 방식, 운영 조건, 리스크를 구체화한다.",
     sections: [
       "1. 이벤트 목적",
       "2. 타깃",
@@ -238,6 +251,8 @@ const workTypeMeta: Record<
   brief: {
     label: "브리프 정리",
     promptTitle: "기획안 생성",
+    roleGuide:
+      "흩어진 광고주 브리프를 실행 가능한 기획 방향으로 재정리한다.",
     sections: [
       "1. 캠페인 요약",
       "2. 문제 정의 / 배경",
@@ -263,6 +278,13 @@ const toneInstructionMap: Record<ToneOption, string> = {
 };
 
 export const transformActions = [
+  { id: "shorter", label: "더 짧게" },
+  { id: "hookier", label: "더 후킹하게" },
+  { id: "client-report", label: "광고주 보고용으로" },
+  { id: "proposal-tone", label: "제안서 톤으로" },
+  { id: "execution-focused", label: "실행안 중심으로" },
+  { id: "add-kpi", label: "KPI 추가" },
+  { id: "risk-improve", label: "리스크 보완" },
   { id: "summary", label: "짧게 요약" },
   { id: "report-lines", label: "보고용 2줄로 변환" },
   { id: "sns", label: "SNS 멘션으로 변환" },
@@ -391,6 +413,20 @@ export function buildPromptInstructions({
 
   const transformInstruction = (() => {
     switch (transformAction) {
+      case "shorter":
+        return "현재 결과를 더 짧게 압축한다. 제목, 핵심 요약 3줄, 바로 할 일 3개, 보고용 한 문장만 남긴다.";
+      case "hookier":
+        return "현재 결과를 더 후킹하게 바꾼다. 과장 없이 첫 문장, 캠페인 메시지, SNS/제안서용 표현의 주목도를 높인다.";
+      case "client-report":
+        return "현재 결과를 광고주 보고용으로 재작성한다. 긍정적이지만 과장하지 말고 성과, 근거, 다음 액션, 확인 필요 리스크를 분리한다.";
+      case "proposal-tone":
+        return "현재 결과를 제안서 톤으로 재작성한다. 문제 정의, 타깃 인사이트, 전략 논리, 실행 아이디어가 설득 흐름을 갖도록 다듬는다.";
+      case "execution-focused":
+        return "현재 결과를 실행안 중심으로 재구성한다. 우선순위, 담당 파트, 진행 순서, 체크리스트, 즉시 실행 가능한 액션을 강화한다.";
+      case "add-kpi":
+        return "현재 결과에 KPI를 추가한다. 핵심 KPI, 보조 KPI, 측정 방법, 확인 주기, 기대효과를 현실적으로 제안한다.";
+      case "risk-improve":
+        return "현재 결과의 리스크를 보완한다. 운영 리스크, 메시지 리스크, 승인/법무 확인 사항, 대응안을 체크리스트로 추가한다.";
       case "summary":
         return "결과를 짧고 밀도 있게 압축한다. 불필요한 배경 설명은 줄이고 바로 공유 가능한 요약형으로 쓴다.";
       case "report-lines":
@@ -407,9 +443,15 @@ export function buildPromptInstructions({
   return [
     "너는 실무형 마케팅 플래너다.",
     `현재 작업은 ${meta.promptTitle}이다.`,
+    meta.roleGuide,
     toneInstruction,
     "결과는 한국어로 작성한다.",
-    "마케터가 제안서, 보고서, 노션, 슬랙에 바로 붙여넣을 수 있도록 제목, 불릿, 체크리스트 중심으로 정리한다.",
+    "마케터가 제안서, 보고서, 노션, 슬랙에 바로 붙여넣을 수 있도록 완성된 문장으로 쓴다.",
+    "모든 결과는 반드시 '제목', '요약', '실행안', '체크리스트', '보고용 문장'이 눈에 띄게 포함되도록 구성한다.",
+    "각 섹션은 제목 1줄, 핵심 불릿, 필요 시 체크박스로 정리한다.",
+    "실행안은 추상적인 방향이 아니라 마케터가 오늘 할 수 있는 액션으로 쓴다.",
+    "보고용 문장은 광고주/대표/팀 공유에 바로 붙일 수 있는 자연스러운 문장으로 쓴다.",
+    "성과, KPI, 리스크가 입력에 있거나 업무 유형상 필요하면 별도 불릿으로 정리한다.",
     "항목 제목은 반드시 아래 순서를 유지한다.",
     sections,
     "입력에 없는 사실은 단정하지 말고, 필요한 경우 '확인 필요'로 표시한다.",
@@ -422,7 +464,7 @@ export function buildPromptInstructions({
 export function buildPromptInput(
   form: Partial<MarketingFormState> & {
     workType: WorkType;
-    attachments?: Attachment[];
+    attachments?: AttachmentMetadata[];
   }
 ) {
   const attachmentSummary = form.attachments?.length
@@ -453,6 +495,55 @@ export function buildPromptInput(
 
 export function mapTransformToPayload(action: TransformActionId) {
   switch (action) {
+    case "shorter":
+      return {
+        workType: "report" as WorkType,
+        tone: "대표 보고용" as ToneOption,
+        requiredPoints:
+          "현재 결과를 더 짧게 줄여줘. 제목, 핵심 요약 3줄, 실행안 3개, 보고용 한 문장만 남겨줘."
+      };
+    case "hookier":
+      return {
+        workType: "sns" as WorkType,
+        tone: "SNS 업로드용" as ToneOption,
+        requiredPoints:
+          "현재 결과를 더 후킹하게 바꿔줘. 첫 문장, 핵심 메시지, 썸네일/릴스 문구를 강하게 제안해줘."
+      };
+    case "client-report":
+      return {
+        workType: "report" as WorkType,
+        tone: "광고주 보고용" as ToneOption,
+        requiredPoints:
+          "현재 결과를 광고주에게 공유할 보고용 문장으로 재작성해줘. 성과, 근거, 다음 액션, 확인 필요 사항을 분리해줘."
+      };
+    case "proposal-tone":
+      return {
+        workType: "proposal" as WorkType,
+        tone: "제안서용" as ToneOption,
+        requiredPoints:
+          "현재 결과를 제안서에 넣을 수 있는 설득력 있는 톤으로 재작성해줘. 배경, 전략, 실행안, 기대효과의 논리를 강화해줘."
+      };
+    case "execution-focused":
+      return {
+        workType: "event" as WorkType,
+        tone: "내부 공유용" as ToneOption,
+        requiredPoints:
+          "현재 결과를 실행안 중심으로 재구성해줘. 우선순위, 진행 순서, 담당 파트, 체크리스트를 구체적으로 작성해줘."
+      };
+    case "add-kpi":
+      return {
+        workType: "report" as WorkType,
+        tone: "광고주 보고용" as ToneOption,
+        requiredPoints:
+          "현재 결과에 KPI를 보완해줘. 핵심 KPI, 보조 KPI, 측정 방법, 확인 주기, 기대효과를 추가해줘."
+      };
+    case "risk-improve":
+      return {
+        workType: "event" as WorkType,
+        tone: "내부 공유용" as ToneOption,
+        requiredPoints:
+          "현재 결과의 리스크를 보완해줘. 운영 리스크, 메시지 리스크, 승인/법무 확인 사항, 대응안을 체크리스트로 추가해줘."
+      };
     case "summary":
       return {
         workType: "report" as WorkType,

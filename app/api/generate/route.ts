@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   AiOutput,
-  Attachment,
+  AttachmentMetadata,
   MarketingFormState,
   TransformActionId,
   ToneOption,
@@ -15,8 +15,36 @@ import {
 type GenerateRequest = Partial<MarketingFormState> & {
   workType?: WorkType;
   transformAction?: TransformActionId | null;
-  attachments?: Attachment[];
+  attachments?: AttachmentMetadata[];
 };
+
+async function readProviderJson(response: Response) {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return (await response.json()) as Record<string, any>;
+  }
+
+  const text = await response.text().catch(() => "");
+  throw new Error(
+    text.trim() || "AI 제공사 응답 형식이 올바르지 않습니다."
+  );
+}
+
+function normalizeAttachmentMetadata(
+  attachments: GenerateRequest["attachments"]
+): AttachmentMetadata[] {
+  if (!Array.isArray(attachments)) return [];
+
+  return attachments
+    .map((item) => ({
+      name: String(item?.name ?? ""),
+      type: String(item?.type ?? ""),
+      size: Number(item?.size ?? 0),
+      url: String(item?.url ?? "")
+    }))
+    .filter((item) => item.name && item.url);
+}
 
 async function generateOpenAi(
   instructions: string,
@@ -55,7 +83,7 @@ async function generateOpenAi(
     };
   }
 
-  const payload = await response.json();
+  const payload = await readProviderJson(response);
   const outputText =
     payload.output_text ??
     payload.output?.[0]?.content?.[0]?.text ??
@@ -115,7 +143,7 @@ async function generateClaude(
     };
   }
 
-  const payload = (await response.json()) as {
+  const payload = (await readProviderJson(response)) as {
     content?: Array<{ type: string; text?: string }>;
   };
 
@@ -136,6 +164,15 @@ async function generateClaude(
 
 export async function POST(request: Request) {
   try {
+    const contentType = request.headers.get("content-type") ?? "";
+
+    if (!contentType.includes("application/json")) {
+      return NextResponse.json(
+        { error: "AI 생성 요청 형식이 올바르지 않습니다." },
+        { status: 400 }
+      );
+    }
+
     const body = (await request.json()) as GenerateRequest;
 
     if (!isWorkType(body.workType)) {
@@ -165,7 +202,7 @@ export async function POST(request: Request) {
       excludedPoints: body.excludedPoints ?? "",
       referenceText: body.referenceText ?? "",
       sourceText: body.sourceText,
-      attachments: body.attachments ?? []
+      attachments: normalizeAttachmentMetadata(body.attachments)
     });
     const instructions = buildPromptInstructions({
       workType: body.workType,

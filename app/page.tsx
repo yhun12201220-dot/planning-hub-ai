@@ -4,6 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AiOutput,
   Attachment,
+  AttachmentMetadata,
   MarketingFormState,
   ResultStatus,
   SavedResult,
@@ -64,6 +65,49 @@ const formatFileSize = (size: number) => {
 
 const isImageAttachment = (attachment: Attachment) =>
   attachment.type.startsWith("image/");
+
+const IMAGE_MAX_FILE_SIZE = 5 * 1024 * 1024;
+const DOCUMENT_MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ATTACHMENT_SIZE_ERROR =
+  "파일 용량이 너무 큽니다. 10MB 이하 파일을 업로드해 주세요.";
+
+const getFileExtension = (name: string) =>
+  name.split(".").pop()?.toLowerCase() ?? "";
+
+const isImageFile = (file: File) =>
+  file.type.startsWith("image/") ||
+  ["jpg", "jpeg", "png", "webp"].includes(getFileExtension(file.name));
+
+const getFileSizeLimit = (file: File) =>
+  isImageFile(file) ? IMAGE_MAX_FILE_SIZE : DOCUMENT_MAX_FILE_SIZE;
+
+const toAttachmentMetadata = (
+  items: Attachment[] = []
+): AttachmentMetadata[] =>
+  items.map(({ name, type, size, url }) => ({ name, type, size, url }));
+
+async function readJsonSafely(response: Response) {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  const text = await response.text().catch(() => "");
+  const normalizedText = text.toLowerCase();
+
+  if (
+    normalizedText.includes("request entity too large") ||
+    normalizedText.includes("body exceeded") ||
+    response.status === 413
+  ) {
+    return { error: ATTACHMENT_SIZE_ERROR };
+  }
+
+  return {
+    error: "서버 응답 형식이 올바르지 않습니다. 잠시 후 다시 시도해 주세요."
+  };
+}
 
 export default function Home() {
   const [form, setForm] = useState<MarketingFormState>(initialFormState);
@@ -211,10 +255,14 @@ export default function Home() {
 
   const fetchSavedResults = async () => {
     const response = await fetch("/api/results");
-    const payload = await response.json();
+    const payload = await readJsonSafely(response);
 
     if (!response.ok) {
-      setError(payload.error ?? "저장 결과 목록을 불러오지 못했습니다.");
+      setError(
+        typeof payload.error === "string"
+          ? payload.error
+          : "저장 결과 목록을 불러오지 못했습니다."
+      );
       return;
     }
 
@@ -230,18 +278,26 @@ export default function Home() {
       attachments?: Attachment[];
     }
   ) => {
+    const { attachments: payloadAttachments, ...restPayload } = payload;
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        ...restPayload,
+        attachments: toAttachmentMetadata(payloadAttachments)
+      })
     });
 
-    const data = await response.json();
+    const data = await readJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(data.error ?? "AI 결과 생성에 실패했습니다.");
+      throw new Error(
+        typeof data.error === "string"
+          ? data.error
+          : "AI 결과 생성에 실패했습니다."
+      );
     }
 
     const nextOutputs = (data.outputs ?? []) as AiOutput[];
@@ -316,6 +372,10 @@ export default function Home() {
       const uploadedAttachments: Attachment[] = [];
 
       for (const file of files) {
+        if (file.size > getFileSizeLimit(file)) {
+          throw new Error(ATTACHMENT_SIZE_ERROR);
+        }
+
         const formData = new FormData();
         formData.append("file", file);
 
@@ -323,10 +383,14 @@ export default function Home() {
           method: "POST",
           body: formData
         });
-        const payload = await response.json();
+        const payload = await readJsonSafely(response);
 
         if (!response.ok) {
-          throw new Error(payload.error ?? "첨부파일 업로드에 실패했습니다.");
+          throw new Error(
+            typeof payload.error === "string"
+              ? payload.error
+              : "첨부파일 업로드에 실패했습니다."
+          );
         }
 
         uploadedAttachments.push(payload.attachment as Attachment);
@@ -423,10 +487,14 @@ export default function Home() {
 
     setIsSaving(false);
 
-    const payload = await response.json();
+    const payload = await readJsonSafely(response);
 
     if (!response.ok) {
-      setError(payload.error ?? "결과 저장에 실패했습니다.");
+      setError(
+        typeof payload.error === "string"
+          ? payload.error
+          : "결과 저장에 실패했습니다."
+      );
       return;
     }
 
@@ -463,10 +531,14 @@ export default function Home() {
     const response = await fetch(`/api/results/${id}`, {
       method: "DELETE"
     });
-    const payload = await response.json();
+    const payload = await readJsonSafely(response);
 
     if (!response.ok) {
-      setError(payload.error ?? "저장 결과 삭제에 실패했습니다.");
+      setError(
+        typeof payload.error === "string"
+          ? payload.error
+          : "저장 결과 삭제에 실패했습니다."
+      );
       return;
     }
 
@@ -501,10 +573,14 @@ export default function Home() {
     });
 
     setIsUpdatingDetail(false);
-    const payload = await response.json();
+    const payload = await readJsonSafely(response);
 
     if (!response.ok) {
-      setError(payload.error ?? "상세 정보 저장에 실패했습니다.");
+      setError(
+        typeof payload.error === "string"
+          ? payload.error
+          : "상세 정보 저장에 실패했습니다."
+      );
       return;
     }
 

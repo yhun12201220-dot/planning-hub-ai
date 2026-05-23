@@ -3,7 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { Attachment } from "@/lib/marketing";
 
 const BUCKET = "marketing-attachments" as const;
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const IMAGE_MAX_FILE_SIZE = 5 * 1024 * 1024;
+const DOCUMENT_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -33,6 +34,19 @@ function getFileExtension(name: string) {
   return name.split(".").pop()?.toLowerCase() ?? "";
 }
 
+function isImageFile(type: string, extension: string) {
+  return (
+    type.startsWith("image/") ||
+    ["jpg", "jpeg", "png", "webp"].includes(extension)
+  );
+}
+
+function getFileSizeLimit(type: string, extension: string) {
+  return isImageFile(type, extension)
+    ? IMAGE_MAX_FILE_SIZE
+    : DOCUMENT_MAX_FILE_SIZE;
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -54,9 +68,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (file.size > MAX_FILE_SIZE) {
+    if (file.size > getFileSizeLimit(file.type, extension)) {
       return NextResponse.json(
-        { error: "파일은 25MB 이하만 업로드할 수 있습니다." },
+        {
+          error: "파일 용량이 너무 큽니다. 10MB 이하 파일을 업로드해 주세요."
+        },
         { status: 400 }
       );
     }
@@ -64,12 +80,11 @@ export async function POST(request: Request) {
     const safeFileName = toSafeFileName(file.name);
     const path = `attachments/${Date.now()}-${safeFileName}`;
     const supabase = createAdminClient();
-    const { error } = await supabase.storage
-      .from(BUCKET)
-      .upload(path, file, {
-        contentType: file.type,
-        upsert: false
-      });
+    const contentType = file.type || "application/octet-stream";
+    const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
+      contentType,
+      upsert: false
+    });
 
     if (error) {
       return NextResponse.json(
@@ -84,7 +99,7 @@ export async function POST(request: Request) {
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
     const attachment: Attachment = {
       name: file.name,
-      type: file.type,
+      type: contentType,
       size: file.size,
       path,
       bucket: BUCKET,
