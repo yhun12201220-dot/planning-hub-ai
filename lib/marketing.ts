@@ -46,6 +46,16 @@ export type Attachment = {
 
 export type AttachmentMetadata = Pick<Attachment, "name" | "type" | "size" | "url">;
 
+export type GeneratedImage = {
+  name: string;
+  prompt: string;
+  url: string;
+  path: string;
+  bucket: "marketing-generated-images";
+  size: string;
+  createdAt: string;
+};
+
 export type MarketingFormState = {
   projectName: string;
   brandName: string;
@@ -81,6 +91,7 @@ export type SavedResult = {
   tags: string[] | null;
   outputs: AiOutput[] | null;
   attachments: Attachment[] | null;
+  generated_images: GeneratedImage[] | null;
   is_deleted?: boolean;
   created_at: string;
   updated_at: string | null;
@@ -280,18 +291,22 @@ const toneInstructionMap: Record<ToneOption, string> = {
 export const transformActions = [
   { id: "shorter", label: "더 짧게" },
   { id: "hookier", label: "더 후킹하게" },
-  { id: "client-report", label: "광고주 보고용으로" },
-  { id: "proposal-tone", label: "제안서 톤으로" },
+  { id: "client-report", label: "광고주 보고용" },
+  { id: "ppt-summary", label: "PPT 장표용 요약" },
   { id: "execution-focused", label: "실행안 중심으로" },
   { id: "add-kpi", label: "KPI 추가" },
-  { id: "risk-improve", label: "리스크 보완" },
-  { id: "summary", label: "짧게 요약" },
-  { id: "report-lines", label: "보고용 2줄로 변환" },
-  { id: "sns", label: "SNS 멘션으로 변환" },
-  { id: "minutes", label: "회의 공유용으로 변환" }
+  { id: "risk-improve", label: "리스크 보완" }
+] as const;
+
+export const creativeActions = [
+  { id: "image-concepts", label: "이미지 시안 생성" },
+  { id: "image-prompts", label: "이미지 프롬프트 생성" },
+  { id: "reference-analysis", label: "레퍼런스 분석" }
 ] as const;
 
 export type TransformActionId = (typeof transformActions)[number]["id"];
+export type CreativeActionId = (typeof creativeActions)[number]["id"];
+export type GenerationActionId = TransformActionId | CreativeActionId;
 
 export function isWorkType(value: unknown): value is WorkType {
   return typeof value === "string" && value in workTypeMeta;
@@ -405,7 +420,7 @@ export function buildPromptInstructions({
 }: {
   workType: WorkType;
   tone: ToneOption;
-  transformAction?: TransformActionId | null;
+  transformAction?: GenerationActionId | null;
 }) {
   const meta = workTypeMeta[workType];
   const sections = meta.sections.join("\n");
@@ -419,22 +434,20 @@ export function buildPromptInstructions({
         return "현재 결과를 더 후킹하게 바꾼다. 과장 없이 첫 문장, 캠페인 메시지, SNS/제안서용 표현의 주목도를 높인다.";
       case "client-report":
         return "현재 결과를 광고주 보고용으로 재작성한다. 긍정적이지만 과장하지 말고 성과, 근거, 다음 액션, 확인 필요 리스크를 분리한다.";
-      case "proposal-tone":
-        return "현재 결과를 제안서 톤으로 재작성한다. 문제 정의, 타깃 인사이트, 전략 논리, 실행 아이디어가 설득 흐름을 갖도록 다듬는다.";
+      case "ppt-summary":
+        return "현재 결과를 PPT 한두 장에 바로 넣을 수 있게 재구성한다. 슬라이드 제목, 핵심 메시지, 본문 불릿, 발표자 노트용 한 문장으로 압축한다.";
       case "execution-focused":
         return "현재 결과를 실행안 중심으로 재구성한다. 우선순위, 담당 파트, 진행 순서, 체크리스트, 즉시 실행 가능한 액션을 강화한다.";
       case "add-kpi":
         return "현재 결과에 KPI를 추가한다. 핵심 KPI, 보조 KPI, 측정 방법, 확인 주기, 기대효과를 현실적으로 제안한다.";
       case "risk-improve":
         return "현재 결과의 리스크를 보완한다. 운영 리스크, 메시지 리스크, 승인/법무 확인 사항, 대응안을 체크리스트로 추가한다.";
-      case "summary":
-        return "결과를 짧고 밀도 있게 압축한다. 불필요한 배경 설명은 줄이고 바로 공유 가능한 요약형으로 쓴다.";
-      case "report-lines":
-        return "광고주 보고용 2줄 인사이트를 가장 중요한 결과물로 본다. 나머지 항목도 간결하게 유지한다.";
-      case "sns":
-        return "현재 결과를 SNS 게시용 문안으로 다시 구성한다.";
-      case "minutes":
-        return "현재 결과를 회의 공유용 정리본처럼 재구성한다.";
+      case "image-concepts":
+        return "현재 기획안 또는 SNS 멘션을 바탕으로 광고 이미지 시안 A/B/C를 만든다. 각 시안은 컨셉, 비주얼, 배경, 제품 노출, 구도, 톤앤매너, 활용 채널을 반드시 포함한다.";
+      case "image-prompts":
+        return "현재 결과와 입력값을 바탕으로 GPT Image, Midjourney, Flux, Stable Diffusion에서 바로 쓸 수 있는 영문 이미지 프롬프트를 만든다. 4:5 SNS 광고용, 상업 광고 사진 품질, 제품 노출, 구도, 조명, 배경, 브랜드 무드를 포함한다.";
+      case "reference-analysis":
+        return "첨부 파일명, 파일 타입, 참고 레퍼런스, 사용자 입력을 바탕으로 레퍼런스 분석을 작성한다. 실제 이미지 픽셀을 분석했다고 말하지 말고, 제공된 정보 기반의 활용 가능한 추정으로 정리한다.";
       default:
         return "";
     }
@@ -516,12 +529,12 @@ export function mapTransformToPayload(action: TransformActionId) {
         requiredPoints:
           "현재 결과를 광고주에게 공유할 보고용 문장으로 재작성해줘. 성과, 근거, 다음 액션, 확인 필요 사항을 분리해줘."
       };
-    case "proposal-tone":
+    case "ppt-summary":
       return {
-        workType: "proposal" as WorkType,
-        tone: "제안서용" as ToneOption,
+        workType: "report" as WorkType,
+        tone: "대표 보고용" as ToneOption,
         requiredPoints:
-          "현재 결과를 제안서에 넣을 수 있는 설득력 있는 톤으로 재작성해줘. 배경, 전략, 실행안, 기대효과의 논리를 강화해줘."
+          "현재 결과를 PPT 장표에 바로 넣을 수 있게 요약해줘. 슬라이드 제목, 핵심 메시지, 본문 불릿, 발표자 노트용 문장으로 정리해줘."
       };
     case "execution-focused":
       return {
@@ -544,32 +557,31 @@ export function mapTransformToPayload(action: TransformActionId) {
         requiredPoints:
           "현재 결과의 리스크를 보완해줘. 운영 리스크, 메시지 리스크, 승인/법무 확인 사항, 대응안을 체크리스트로 추가해줘."
       };
-    case "summary":
+  }
+}
+
+export function mapCreativeActionToPayload(action: CreativeActionId) {
+  switch (action) {
+    case "image-concepts":
       return {
-        workType: "report" as WorkType,
-        tone: "대표 보고용" as ToneOption,
-        requiredPoints: "전체 내용을 짧게 요약하고 핵심만 남겨줘."
-      };
-    case "report-lines":
-      return {
-        workType: "report" as WorkType,
-        tone: "광고주 보고용" as ToneOption,
+        workType: "proposal" as WorkType,
+        tone: "제안서용" as ToneOption,
         requiredPoints:
-          "광고주 보고용 2줄 인사이트를 가장 중요하게 작성하고, 나머지는 간단히 정리해줘."
+          "현재 결과를 바탕으로 이미지 시안 A/B/C를 만들어줘. 각 시안은 컨셉, 비주얼, 배경, 제품 노출, 구도, 톤앤매너, 활용 채널을 포함해줘."
       };
-    case "sns":
+    case "image-prompts":
       return {
         workType: "sns" as WorkType,
         tone: "SNS 업로드용" as ToneOption,
         requiredPoints:
-          "현재 결과를 바탕으로 SNS 업로드 문안으로 변환해줘."
+          "현재 결과와 입력값을 바탕으로 GPT Image, Midjourney, Flux, Stable Diffusion에서 바로 쓸 수 있는 영문 이미지 프롬프트를 각각 작성해줘. 4:5 SNS 광고용으로 작성해줘."
       };
-    case "minutes":
+    case "reference-analysis":
       return {
-        workType: "minutes" as WorkType,
-        tone: "회의록용" as ToneOption,
+        workType: "proposal" as WorkType,
+        tone: "내부 공유용" as ToneOption,
         requiredPoints:
-          "현재 결과를 회의 공유용 정리본처럼 재구성해줘."
+          "첨부 파일명, 파일 타입, 참고 레퍼런스, 사용자 입력을 기반으로 레퍼런스 분석을 작성해줘. 색감, 구도, 카피 위치, 모델 특징, 브랜드 무드, 디자인 특징, 활용 포인트, 유사 제작 방향을 포함해줘."
       };
   }
 }

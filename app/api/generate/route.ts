@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import {
   AiOutput,
   AttachmentMetadata,
+  GenerationActionId,
   MarketingFormState,
-  TransformActionId,
   ToneOption,
   WorkType,
   buildPromptInput,
@@ -14,7 +14,7 @@ import {
 
 type GenerateRequest = Partial<MarketingFormState> & {
   workType?: WorkType;
-  transformAction?: TransformActionId | null;
+  transformAction?: GenerationActionId | null;
   attachments?: AttachmentMetadata[];
 };
 

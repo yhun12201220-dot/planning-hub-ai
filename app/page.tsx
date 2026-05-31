@@ -5,6 +5,9 @@ import {
   AiOutput,
   Attachment,
   AttachmentMetadata,
+  CreativeActionId,
+  GenerationActionId,
+  GeneratedImage,
   MarketingFormState,
   ResultStatus,
   SavedResult,
@@ -12,10 +15,12 @@ import {
   ToneOption,
   TransformActionId,
   WorkType,
+  creativeActions,
   getPreferredResultText,
   getSavedResultDisplayText,
   getWorkTypeLabel,
   initialFormState,
+  mapCreativeActionToPayload,
   mapTransformToPayload,
   normalizeSavedOutputs,
   parseTags,
@@ -26,11 +31,12 @@ import {
 } from "@/lib/marketing";
 
 const workflowSteps = [
-  "업무 유형 선택",
-  "실무 정보 입력",
-  "AI 결과 생성",
-  "저장/변환",
-  "재활용"
+  "기획안 생성",
+  "SNS 멘션 생성",
+  "이미지 시안 생성",
+  "이미지 프롬프트 생성",
+  "이미지 생성",
+  "저장"
 ];
 
 const initialFilters: SearchFilters = {
@@ -118,6 +124,7 @@ export default function Home() {
   const [savedResults, setSavedResults] = useState<SavedResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<SavedResult | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [filters, setFilters] = useState<SearchFilters>(initialFilters);
   const [detailTitle, setDetailTitle] = useState("");
   const [detailStatus, setDetailStatus] = useState<ResultStatus>("초안");
@@ -127,6 +134,7 @@ export default function Home() {
   const [isUpdatingDetail, setIsUpdatingDetail] = useState(false);
   const [isTransforming, setIsTransforming] = useState(false);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copyState, setCopyState] = useState("복사하기");
@@ -143,14 +151,20 @@ export default function Home() {
     (output) => output.status === "success" && output.result
   );
 
-  const isBusy = isLoading || isTransforming;
+  const isBusy = isLoading || isTransforming || isGeneratingImage;
 
   const currentStep = useMemo(() => {
-    if (!form.sourceText.trim()) return 1;
-    if (successfulOutputs.length === 0) return 2;
-    if (!hasSavedCurrentResult) return 3;
-    return 4;
-  }, [form.sourceText, hasSavedCurrentResult, successfulOutputs.length]);
+    if (!form.sourceText.trim()) return 0;
+    if (successfulOutputs.length === 0) return 0;
+    if (generatedImages.length > 0 && hasSavedCurrentResult) return 5;
+    if (generatedImages.length > 0) return 4;
+    return 2;
+  }, [
+    form.sourceText,
+    generatedImages.length,
+    hasSavedCurrentResult,
+    successfulOutputs.length
+  ]);
 
   const brandOptions = useMemo(() => {
     const brands = new Set(
@@ -274,7 +288,7 @@ export default function Home() {
       workType: WorkType;
       sourceText: string;
       tone: ToneOption;
-      transformAction?: TransformActionId | null;
+      transformAction?: GenerationActionId | null;
       attachments?: Attachment[];
     }
   ) => {
@@ -315,6 +329,7 @@ export default function Home() {
     setError("");
     setNotice("");
     setSelectedResult(null);
+    setGeneratedImages([]);
     setHasSavedCurrentResult(false);
     setIsLoading(true);
 
@@ -351,6 +366,7 @@ export default function Home() {
     setForm(initialFormState);
     setOutputs([]);
     setAttachments([]);
+    setGeneratedImages([]);
     setSelectedResult(null);
     setError("");
     setNotice("");
@@ -440,13 +456,15 @@ export default function Home() {
         excludedPoints: selectedResult.excluded_points ?? "",
         referenceText: selectedResult.reference_text ?? "",
         sourceText: selectedResult.source_text ?? "",
-        attachments: selectedResult.attachments ?? []
+        attachments: selectedResult.attachments ?? [],
+        generatedImages: selectedResult.generated_images ?? []
       };
     }
 
     return {
       ...form,
-      attachments
+      attachments,
+      generatedImages
     };
   };
 
@@ -481,7 +499,8 @@ export default function Home() {
         status: selectedResult?.status ?? "초안",
         tags: selectedResult?.tags ?? [],
         outputs,
-        attachments: context.attachments ?? attachments
+        attachments: context.attachments ?? attachments,
+        generatedImages: context.generatedImages ?? generatedImages
       })
     });
 
@@ -514,6 +533,7 @@ export default function Home() {
     setOutputs(restoredOutputs);
     setActiveProvider(firstSuccess?.provider ?? "openai");
     setAttachments(item.attachments ?? []);
+    setGeneratedImages(item.generated_images ?? []);
     setSelectedResult(item);
     setError("");
     setNotice(`${getDisplayTitle(item)}를 불러왔습니다.`);
@@ -602,6 +622,7 @@ export default function Home() {
     setError("");
     setNotice("");
     setSelectedResult(null);
+    setGeneratedImages([]);
     setHasSavedCurrentResult(false);
 
     try {
@@ -665,6 +686,102 @@ export default function Home() {
     }
   };
 
+  const handleCreativeAction = async (action: CreativeActionId) => {
+    const context = getCurrentContext();
+    const baseResultText =
+      activeOutput?.result || getSavedResultDisplayText(selectedResult ?? {});
+
+    if (!baseResultText.trim()) {
+      setError("이미지 작업에 사용할 기획안 또는 SNS 멘션 결과가 없습니다.");
+      return;
+    }
+
+    const mapped = mapCreativeActionToPayload(action);
+    setIsTransforming(true);
+    setError("");
+    setNotice("");
+    setSelectedResult(null);
+    setHasSavedCurrentResult(false);
+
+    try {
+      updateField("workType", mapped.workType);
+      updateField("tone", mapped.tone);
+      updateField("requiredPoints", mapped.requiredPoints);
+      updateField("sourceText", baseResultText);
+
+      await handleGenerate({
+        ...context,
+        workType: mapped.workType,
+        tone: mapped.tone,
+        requiredPoints: mapped.requiredPoints,
+        sourceText: baseResultText,
+        attachments: context.attachments ?? [],
+        transformAction: action
+      });
+      setNotice("크리에이티브 작업 결과가 생성되었습니다.");
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "크리에이티브 작업 중 오류가 발생했습니다."
+      );
+    } finally {
+      setIsTransforming(false);
+    }
+  };
+
+  const handleGenerateImage = async () => {
+    const prompt =
+      activeOutput?.result || getSavedResultDisplayText(selectedResult ?? {});
+
+    if (!prompt.trim()) {
+      setError("이미지 생성에 사용할 프롬프트가 없습니다.");
+      return;
+    }
+
+    setIsGeneratingImage(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/images", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          prompt,
+          projectName: form.projectName,
+          brandName: form.brandName
+        })
+      });
+      const payload = await readJsonSafely(response);
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload.error === "string"
+            ? payload.error
+            : "이미지 생성에 실패했습니다."
+        );
+      }
+
+      setGeneratedImages((current) => [
+        payload.image as GeneratedImage,
+        ...current
+      ]);
+      setHasSavedCurrentResult(false);
+      setNotice("SNS 광고용 이미지 시안이 생성되었습니다.");
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "이미지 생성 중 오류가 발생했습니다."
+      );
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
   return (
     <main className="min-h-screen">
       <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[300px_minmax(520px,1fr)_520px]">
@@ -703,11 +820,27 @@ export default function Home() {
             ))}
           </nav>
 
-          <section className="mt-10 rounded-md border border-white/10 bg-white/8 p-4">
-            <p className="text-sm font-semibold">팀 공용 작업공간</p>
-            <p className="mt-2 text-sm leading-6 text-white/66">
-              같은 주소를 쓰는 팀원이 결과를 생성하고, 상태와 태그를 붙여 다시 활용할 수 있습니다.
-            </p>
+          <section className="mt-10 rounded-md border border-emerald-300/30 bg-emerald-300/10 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">팀 공용 생성공간</p>
+                <p className="mt-2 text-sm leading-6 text-white/72">
+                  로그인 없이 같은 주소를 쓰는 팀원이 생성 결과, 상태, 태그,
+                  첨부파일을 함께 저장하고 다시 활용합니다.
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full border border-emerald-200/40 bg-emerald-200/18 px-2.5 py-1 text-xs font-semibold text-emerald-50">
+                활성화됨
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-white/70">
+              <div className="rounded border border-white/10 bg-white/8 px-3 py-2">
+                저장 결과 {savedResults.length}개
+              </div>
+              <div className="rounded border border-white/10 bg-white/8 px-3 py-2">
+                공용 목록 자동 갱신
+              </div>
+            </div>
           </section>
         </aside>
 
@@ -724,7 +857,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mb-7 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="mb-7 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
             {workflowSteps.map((step, index) => (
               <div
                 key={step}
@@ -1038,6 +1171,25 @@ export default function Home() {
             >
               {isTransforming ? "변환 중" : "다시 생성"}
             </button>
+            {creativeActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                onClick={() => void handleCreativeAction(action.id)}
+                disabled={isBusy || !activeOutput?.result}
+                className="h-10 rounded-md border border-accent/30 bg-accent/8 px-4 text-sm font-semibold text-accent transition hover:border-accent disabled:cursor-not-allowed disabled:border-line disabled:bg-white disabled:text-muted"
+              >
+                {action.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => void handleGenerateImage()}
+              disabled={isBusy || !activeOutput?.result}
+              className="h-10 rounded-md bg-signal px-4 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-muted"
+            >
+              {isGeneratingImage ? "이미지 생성 중" : "이미지 생성"}
+            </button>
             {transformActions.map((action) => (
               <button
                 key={action.id}
@@ -1098,6 +1250,39 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {generatedImages.length > 0 ? (
+            <section className="mt-5 rounded-md border border-line bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-ink">생성 이미지</h3>
+                <span className="text-xs text-muted">4:5 SNS 광고용</span>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {generatedImages.map((image) => (
+                  <a
+                    key={image.path}
+                    href={image.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group block overflow-hidden rounded-md border border-line bg-slate-50"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={image.url}
+                      alt={image.name}
+                      className="aspect-[4/5] w-full object-cover transition group-hover:scale-[1.02]"
+                    />
+                    <div className="space-y-1 p-3">
+                      <p className="truncate text-sm font-semibold text-ink">
+                        {image.name}
+                      </p>
+                      <p className="text-xs text-muted">{image.size}</p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {selectedResult ? (
             <section className="mt-6 rounded-md border border-line bg-white p-4">
@@ -1258,6 +1443,49 @@ export default function Home() {
                     ) : (
                       <p className="mt-1">-</p>
                     )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">
+                      생성 이미지
+                    </p>
+                    {selectedResult.generated_images?.length ? (
+                      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                        {selectedResult.generated_images.map((image) => (
+                          <a
+                            key={image.path}
+                            href={image.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="overflow-hidden rounded-md border border-line bg-slate-50"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={image.url}
+                              alt={image.name}
+                              className="aspect-[4/5] w-full object-cover"
+                            />
+                            <div className="space-y-1 p-3">
+                              <span className="block truncate font-semibold text-ink">
+                                {image.name}
+                              </span>
+                              <span className="block text-xs text-muted">
+                                {image.size} · 생성 {formatDate(image.createdAt)}
+                              </span>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1">-</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">생성 일시</p>
+                    <p className="mt-1">{formatDate(selectedResult.created_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-muted">수정 일시</p>
+                    <p className="mt-1">{formatDate(selectedResult.updated_at)}</p>
                   </div>
                 </div>
               </div>

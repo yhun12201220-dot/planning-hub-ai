@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   Attachment,
+  GeneratedImage,
   ResultStatus,
   SavedResult,
   ToneOption,
@@ -32,6 +33,7 @@ type SaveRequest = {
   tags?: string[] | string;
   outputs?: unknown;
   attachments?: Attachment[];
+  generatedImages?: GeneratedImage[];
 };
 
 const resultSelect = [
@@ -54,6 +56,7 @@ const resultSelect = [
   "tags",
   "outputs",
   "attachments",
+  "generated_images",
   "created_at",
   "updated_at",
   "is_deleted"
@@ -145,6 +148,7 @@ export async function POST(request: Request) {
     const { data, error } = await supabase
       .from("marketing_outputs")
       .insert({
+        user_id: null,
         title,
         project_name: body.projectName?.trim() ?? "",
         brand_name: body.brandName?.trim() ?? "",
@@ -163,6 +167,7 @@ export async function POST(request: Request) {
         tags: parseTags(body.tags),
         outputs: body.outputs ?? [],
         attachments: body.attachments ?? [],
+        generated_images: body.generatedImages ?? [],
         is_deleted: false,
         updated_at: new Date().toISOString()
       })
